@@ -2,6 +2,16 @@
 
 Deckr is a desktop application that allows you to build stunning, PowerPoint-compatible presentations in minutes using AI. By combining web research, intelligent design agents, and modern web technologies, Deckr transforms a simple topic into a full-bleed, animated slide deck.
 
+## 📖 About
+
+Deckr was born from the frustration of spending hours on slide layouts and searching for relevant content. Unlike traditional AI presentation tools that just generate static text on a template, Deckr uses a **Multi-Agent Orchestration** approach:
+1.  **Research Agent**: Scours the web for real-time facts and data.
+2.  **Content Agent**: Plans a coherent narrative across slides.
+3.  **Animation Agent**: Designs high-level visual sequences.
+4.  **Designer Agent**: Writes custom, unique HTML/CSS for every single slide.
+
+The result is a presentation that feels hand-crafted, dynamic, and data-driven.
+
 ## 🚀 Key Features
 
 - **AI Orchestration**: Multi-agent system that handles research, content planning, and slide design independently.
@@ -9,15 +19,30 @@ Deckr is a desktop application that allows you to build stunning, PowerPoint-com
 - **Smart Image Sourcing**: Automatically finds relevant images via Tavily research and high-quality stock sources.
 - **AI Image Generation**: Built-in support for Together AI, Fal.ai, and OpenAI to generate custom illustrations.
 - **PowerPoint Animations**: Native-like "click-to-reveal" animations and professional slide transitions.
-- **PPTX Export**: Export your generated slides to standard `.pptx` format while preserving layout and images.
 - **Modern UI**: Built with React and Tauri for a fast, native desktop experience.
 
 ## 🛠️ Tech Stack
 
 - **Frontend**: React, TypeScript, Vite, TailwindCSS
 - **Backend**: Rust, Tauri
-- **AI Models**: Gemini 1.5 Pro/Flash, OpenAI GPT-4o
-- **APIs**: Tavily (Research), DuckDuckGo (Image Search)
+- **APIs**: Tavily (Research Engine)
+
+## 🗺️ Roadmap (Task Todo List)
+
+### 🔴 High Priority
+- [ ] **PPTX Export**: Implement native `.pptx` generation preserving layouts and animations.
+- [ ] **PDF Export**: Single-click "Save as PDF" for static distribution.
+- [ ] **Mobile Preview**: Remote viewing of slides on a mobile device via QR code.
+
+### 🟡 Improved Design
+- [ ] **Custom Theme Import**: Support for user-defined CSS/JSON themes.
+- [ ] **Icon Library**: Integration with Lucide/FontAwesome for richer visuals.
+- [ ] **Charts & Data Viz**: Auto-generation of Chart.js/SVG charts based on research data.
+
+### 🟢 Advanced Features
+- [ ] **Local LLM Support**: Support for Ollama/Llama.cpp for privacy-focused generation.
+- [ ] **Multi-language Support**: Native UI translation and improved non-English content generation.
+- [ ] **Version History**: Save and restore previous versions of your deck.
 
 ## 📦 Installation
 
