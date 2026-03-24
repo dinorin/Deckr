@@ -32,16 +32,16 @@ The result is a presentation that feels hand-crafted, dynamic, and data-driven.
 ### 🔴 High Priority
 - [ ] **PPTX Export**: Implement native `.pptx` generation preserving layouts and animations.
 - [ ] **PDF Export**: Single-click "Save as PDF" for static distribution.
-- [ ] **Mobile Preview**: Remote viewing of slides on a mobile device via QR code.
+- [ ] **Chat UI/UX Overhaul**: Multi-modal input, improved message bubbles, and better agent status visualization.
 
 ### 🟡 Improved Design
-- [ ] **Custom Theme Import**: Support for user-defined CSS/JSON themes.
 - [ ] **Icon Library**: Integration with Lucide/FontAwesome for richer visuals.
 - [ ] **Charts & Data Viz**: Auto-generation of Chart.js/SVG charts based on research data.
+- [ ] **Smart Templates**: Dynamic layouts based on slide intent (Team, Financials, Timeline).
 
 ### 🟢 Advanced Features
-- [ ] **Local LLM Support**: Support for Ollama/Llama.cpp for privacy-focused generation.
-- [ ] **Multi-language Support**: Native UI translation and improved non-English content generation.
+- [ ] **Local LLM Support**: Native connection to Ollama/Localhost for private generation.
+- [ ] **Voice Commands**: Command the presentation builder via voice-to-action.
 - [ ] **Version History**: Save and restore previous versions of your deck.
 
 ## 📦 Installation
