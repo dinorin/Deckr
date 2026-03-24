@@ -1,0 +1,194 @@
+/*
+ * Deckr — PowerPoint-Compatible Animation Classes
+ * Each class maps to a PowerPoint preset animation for faithful PPTX export.
+ *
+ * Usage on elements:
+ *   class="ppt-element ppt-hidden ppt-fly-in-bottom"
+ *   data-click="1"
+ *   data-duration="600"
+ *   data-ppt-animation="fly-in-bottom"
+ */
+
+/* ── Hidden state (animated elements start here) ─────────────────────────── */
+
+/* ppt-hidden only hides elements inside the Viewer (.deck-container).
+   In Preview/thumbnails, all elements are always visible. */
+.ppt-element {
+  display: block;
+  position: relative; /* Default to relative so AI can easily switch to absolute */
+  box-sizing: border-box;
+}
+
+.deck-container .ppt-hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none;
+}
+
+.ppt-element.animating {
+  pointer-events: auto;
+}
+
+/* Preview mode: show everything, no animations, match iframe default color */
+.ppt-preview {
+  color: #fff;
+}
+.ppt-preview .ppt-hidden {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* ── Entrance Animations ─────────────────────────────────────────────────── */
+/* 
+   We only keep these classes as identifiers for export/parsing.
+   The actual animations are driven by the Web Animations API in Viewer.tsx.
+   We just need to ensure they don't force opacity/visibility that overrides the animation.
+*/
+
+/* Appear — PPT presetID=1 */
+.ppt-appear {}
+
+/* Fade In — PPT presetID=10 */
+.ppt-fade-in {}
+
+/* Fly In from Bottom — PPT presetID=2, subtype=2 */
+.ppt-fly-in-bottom {}
+
+/* Fly In from Top — PPT presetID=2, subtype=1 */
+.ppt-fly-in-top {}
+
+/* Fly In from Left — PPT presetID=2, subtype=8 */
+.ppt-fly-in-left {}
+
+/* Fly In from Right — PPT presetID=2, subtype=4 */
+.ppt-fly-in-right {}
+
+/* Float In (gentle rise) — PPT presetID=7 */
+.ppt-float-in {}
+
+/* Zoom In — PPT presetID=22 */
+.ppt-zoom-in {}
+
+/* Bounce In — PPT presetID=26 */
+.ppt-bounce-in {}
+
+/* Wipe from Left — PPT presetID=35, subtype=8 */
+.ppt-wipe-left {}
+
+/* Wipe from Right — PPT presetID=35, subtype=4 */
+.ppt-wipe-right {}
+
+/* Split (vertical) — PPT presetID=34 */
+.ppt-split {}
+
+/* Swivel (3D horizontal) — PPT presetID=28 */
+.ppt-swivel {}
+
+/* ── Slide Appear (thumbnail strip entry) ────────────────────────────────── */
+@keyframes thumbAppear {
+  from { opacity: 0; transform: scale(0.85) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.slide-thumb-enter {
+  animation: thumbAppear 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* ── Slide Transitions ────────────────────────────────────────────────────── */
+
+/* Container — wraps all slides */
+.deck-container {
+  position: relative;
+  width: 960px;
+  height: 540px;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Each slide — visible by default (for Preview/thumbnails).
+   Only hidden inside .deck-container (the Viewer) */
+.ppt-slide {
+  position: relative;
+  width: 960px;
+  height: 540px;
+  overflow: hidden;
+}
+
+/* Inside the Viewer container: hide non-active slides */
+.deck-container .ppt-slide {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+
+.deck-container .ppt-slide.active {
+  display: block;
+  z-index: 10;
+}
+
+.deck-container .ppt-slide.exiting {
+  display: block;
+  z-index: 5;
+}
+
+/* Transition: Fade */
+.ppt-slide.tr-fade-enter {
+  animation: deckFadeIn 0.4s ease forwards;
+}
+.ppt-slide.tr-fade-exit {
+  animation: deckFadeOut 0.4s ease forwards;
+}
+@keyframes deckFadeIn  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes deckFadeOut { from { opacity: 1; } to { opacity: 0; } }
+
+/* Transition: Push Left (forward) */
+.ppt-slide.tr-push-enter {
+  animation: deckPushEnter 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.ppt-slide.tr-push-exit {
+  animation: deckPushExit 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes deckPushEnter { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes deckPushExit  { from { transform: translateX(0); }    to { transform: translateX(-100%); } }
+
+/* Transition: Push Right (backward) */
+.ppt-slide.tr-push-back-enter {
+  animation: deckPushBackEnter 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.ppt-slide.tr-push-back-exit {
+  animation: deckPushBackExit 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes deckPushBackEnter { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes deckPushBackExit  { from { transform: translateX(0); }     to { transform: translateX(100%); } }
+
+/* Transition: Wipe */
+.ppt-slide.tr-wipe-enter {
+  animation: deckWipeEnter 0.5s ease-out forwards;
+  clip-path: inset(0 100% 0 0);
+}
+@keyframes deckWipeEnter { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+
+/* ── Presentation Viewer Chrome ───────────────────────────────────────────── */
+
+/* Aspect ratio wrapper: keeps 16:9 ratio in any window size */
+.deck-aspect-wrapper {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Scale container to fit available space while preserving 16:9 */
+.deck-scale-root {
+  width: 960px;
+  height: 540px;
+  transform-origin: top left;
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* Cursor: pointer when there are more animations/slides */
+.deck-container.has-next {
+  cursor: pointer;
+}

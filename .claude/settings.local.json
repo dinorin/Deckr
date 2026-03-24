@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo:*)",
+      "Bash(cp:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(cargo check:*)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill:*)",
+      "Bash(cmd /c \"taskkill /PID 192 /F\" 2>&1)",
+      "Bash(cmd /c \"tasklist /FI \\\\\"PID eq 192\\\\\"\" 2>&1)",
+      "Bash(powershell -Command \"Get-Process -Id \\(Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue\\).OwningProcess -ErrorAction SilentlyContinue | Select-Object Id, Name\" 2>&1)",
+      "Bash(powershell -Command \"Stop-Process -Id \\(Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue\\).OwningProcess -Force -ErrorAction SilentlyContinue; Write-Host 'Done'\" 2>&1)",
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue\" 2>&1)",
+      "Bash(find D:duancanhanslothcv -type f \\\\\\(-name *titlebar* -o -name *TitleBar* -o -name *window-control* \\\\\\) -iname *.tsx -o -iname *.jsx)",
+      "Bash(grep -rn '#[0-9a-fA-F]\\\\{3,6\\\\}' /d/duancanhan/Deckr/src --include=\"*.tsx\" --include=\"*.ts\" --include=\"*.jsx\" --include=\"*.js\")",
+      "Bash(mkdir -p D:/duancanhan/Deckr/src/assets/fonts)",
+      "Bash(curl -L \"https://fonts.gstatic.com/s/roboto/v47/KFOMCnqEu92Fr1MmEU9fBBc-.woff2\" -o \"Roboto-Regular.woff2\")",
+      "Bash(curl -L \"https://fonts.gstatic.com/s/roboto/v47/KFOMCnqEu92Fr1MmEU9fCBc-.woff2\" -o \"Roboto-Medium.woff2\")",
+      "Bash(curl -L \"https://fonts.gstatic.com/s/roboto/v47/KFOMCnqEu92Fr1MmEU9fAxc-.woff2\" -o \"Roboto-SemiBold.woff2\")",
+      "Bash(file:*)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''''dependencies'''',{}\\), indent=2\\)\\)\")",
+      "Bash(find D:/duancanhan/Deckr/src-tauri/gen -name *.rs)",
+      "Bash(cargo clean:*)",
+      "Bash(cargo build:*)",
+      "Bash(npm list:*)"
+    ]
+  }
+}

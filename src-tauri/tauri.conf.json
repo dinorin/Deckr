@@ -1,0 +1,49 @@
+{
+  "productName": "Deckr",
+  "version": "0.1.0",
+  "identifier": "com.deckr.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:3000",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "splashscreen",
+        "url": "splashscreen.html",
+        "width": 400,
+        "height": 260,
+        "resizable": false,
+        "decorations": false,
+        "center": true,
+        "visible": true,
+        "alwaysOnTop": true
+      },
+      {
+        "label": "main",
+        "url": "/",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 600,
+        "decorations": false,
+        "visible": false,
+        "center": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

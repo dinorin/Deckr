@@ -1,0 +1,68 @@
+@import "tailwindcss";
+@import "./slide/animations.css";
+@import "@fontsource/roboto/400.css";
+@import "@fontsource/roboto/500.css";
+@import "@fontsource/roboto/700.css";
+
+/* Design tokens — defaults (Obsidian), overridden at runtime via applyTheme() */
+:root {
+  --bg:      #212121;
+  --surface: #1a1a1a;
+  --card:    #2b2b2b;
+  --input:   #323232;
+  --line:    #3a3a3a;
+  --line-hi: #4a4a4a;
+  --fg:      #f0f0f0;
+  --fg-2:    #d0d0d0;
+  --fg-3:    #a0a0a0;
+  --fg-4:    #707070;
+  --fg-5:    #555555;
+  --fg-6:    #3a3a3a;
+  --cta:     #c8c8c8;
+  --cta-hv:  #e0e0e0;
+  --cta-fg:  #212121;
+  --tint:    #303030;
+  --tint-bd: #3e3e3e;
+}
+
+@theme inline {
+  --color-bg:      var(--bg);
+  --color-surface: var(--surface);
+  --color-card:    var(--card);
+  --color-input:   var(--input);
+  --color-line:    var(--line);
+  --color-line-hi: var(--line-hi);
+  --color-fg:      var(--fg);
+  --color-fg-2:    var(--fg-2);
+  --color-fg-3:    var(--fg-3);
+  --color-fg-4:    var(--fg-4);
+  --color-fg-5:    var(--fg-5);
+  --color-fg-6:    var(--fg-6);
+  --color-cta:     var(--cta);
+  --color-cta-hv:  var(--cta-hv);
+  --color-cta-fg:  var(--cta-fg);
+  --color-tint:    var(--tint);
+  --color-tint-bd: var(--tint-bd);
+}
+
+@layer base {
+  * { -webkit-tap-highlight-color: transparent; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 16px;
+    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  textarea, input { user-select: text; }
+
+  ::-webkit-scrollbar { width: 3px; height: 3px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line-hi); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--fg-4); }
+}

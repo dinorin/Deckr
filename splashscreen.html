@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deckr</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        background: #0a0a0a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        font-family: 'Inter', -apple-system, sans-serif;
+      }
+      .wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        animation: up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+      .icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        background: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .name {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        color: #f1f1f1;
+      }
+      .sub {
+        font-size: 11px;
+        color: #444;
+        letter-spacing: 0.5px;
+      }
+      @keyframes up {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+      </div>
+      <div class="name">Deckr</div>
+      <div class="sub">AI Presentation Builder</div>
+    </div>
+  </body>
+</html>
