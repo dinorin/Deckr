@@ -27,23 +27,6 @@ The result is a presentation that feels hand-crafted, dynamic, and data-driven.
 - **Backend**: Rust, Tauri
 - **APIs**: Tavily (Research Engine)
 
-## 🗺️ Roadmap (Task Todo List)
-
-### 🔴 High Priority
-- [ ] **PPTX Export**: Implement native `.pptx` generation preserving layouts and animations.
-- [ ] **PDF Export**: Single-click "Save as PDF" for static distribution.
-- [ ] **Chat UI/UX Overhaul**: Multi-modal input, improved message bubbles, and better agent status visualization.
-
-### 🟡 Improved Design
-- [ ] **Icon Library**: Integration with Lucide/FontAwesome for richer visuals.
-- [ ] **Charts & Data Viz**: Auto-generation of Chart.js/SVG charts based on research data.
-- [ ] **Smart Templates**: Dynamic layouts based on slide intent (Team, Financials, Timeline).
-
-### 🟢 Advanced Features
-- [ ] **Local LLM Support**: Native connection to Ollama/Localhost for private generation.
-- [ ] **Voice Commands**: Command the presentation builder via voice-to-action.
-- [ ] **Version History**: Save and restore previous versions of your deck.
-
 ## 📦 Installation
 
 ### Prerequisites
