@@ -5,6 +5,7 @@ import { Chart, registerables } from 'chart.js';
 import { createIcons, icons as lucideIcons } from 'lucide';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
+import { openPath } from '@tauri-apps/plugin-opener';
 import type { DeckData } from '../types';
 
 Chart.register(...registerables);
@@ -427,8 +428,19 @@ async function renderSlideForExport(html: string): Promise<{ bgDataUrl: string; 
       .filter(el => /^layer-(bg|deco|overlay)-/.test(el.id))
       .forEach(el => { el.style.visibility = 'visible'; el.style.opacity = '1'; });
 
+    // Fallback: if no layer-bg-* exists, read data-bg-color and apply directly to the
+    // slide element so html2canvas doesn't produce a transparent/white background.
+    const hasBgLayer = allLayerEls.some(el => /^layer-bg-/.test(el.id));
+    const fallbackBg = !hasBgLayer
+      ? (slideEl.getAttribute('data-bg-color') || slideEl.style.background || slideEl.style.backgroundColor || '#0f0f1f')
+      : null;
+    const prevSlideBackground = slideEl.style.background;
+    if (fallbackBg) slideEl.style.background = fallbackBg;
+
     const bgCanvas = await html2canvas(slideEl, { ...CANVAS_OPTS, width: SLIDE_W_PX, height: SLIDE_H_PX });
     const bgDataUrl = bgCanvas.toDataURL('image/png');
+
+    if (fallbackBg) slideEl.style.background = prevSlideBackground;
 
     // Re-show text layers to parse/capture
     textLayerEls.forEach(el => { el.style.visibility = 'visible'; el.style.opacity = '1'; });
@@ -675,13 +687,13 @@ async function injectAnimations(
 export async function exportToPptx(
   deckData: DeckData,
   onProgress?: (current: number, total: number) => void,
-): Promise<void> {
+): Promise<string | null> {
   // Pick save path first
   const savePath = await save({
     defaultPath: `${sanitizeFilename(deckData.title || 'presentation')}.pptx`,
     filters: [{ name: 'PowerPoint', extensions: ['pptx'] }],
   });
-  if (!savePath) return; // user cancelled
+  if (!savePath) return null; // user cancelled
 
   const pptx = new PptxGenJS();
   pptx.layout = 'LAYOUT_WIDE';
@@ -742,6 +754,12 @@ export async function exportToPptx(
   const buffer = await pptx.write({ outputType: 'arraybuffer' }) as ArrayBuffer;
   const patched = await injectAnimations(buffer, slideTimings, slideTransitions);
   await writeFile(savePath, patched);
+  try {
+    await openPath(savePath);
+  } catch (e) {
+    console.error('[openPath] failed:', e);
+  }
+  return savePath;
 }
 
 function sanitizeFilename(name: string): string {

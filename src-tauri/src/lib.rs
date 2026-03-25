@@ -154,18 +154,7 @@ let mut settings = settings::load_settings_raw(&app);
 
             let (web_research, tavily_imgs, tavily_links) = tools::parallel_tavily_search(keywords, &tavily_key).await;
 
-            let mut images: Vec<tools::ImageResult> = Vec::new();
-            for (i, t_url) in tavily_imgs.iter().enumerate() {
-                images.push(tools::ImageResult {
-                    url: t_url.clone(),
-                    width: 1280,
-                    height: 720,
-                    aspect_ratio: 1280.0 / 720.0,
-                    description: format!("Tavily research image {}", i + 1),
-                    avg_color: "rgb(100,100,100)".to_string(),
-                    text_color: "#ffffff".to_string(),
-                });
-            }
+            let images = tools::validate_and_build_images(tavily_imgs.clone()).await;
 
             let image_count = images.len();
             let research_len = web_research.chars().count();
@@ -233,7 +222,7 @@ let mut settings = settings::load_settings_raw(&app);
             // ── Phase 4: Design specs ──────────────────────────────────────
             emit!("design", "thinking", format!("Designing {} slides…", outline.len()));
 
-            let design_specs = agents::design_agent::run(&settings, &outline, &theme).await
+            let design_specs = agents::design_agent::run(&settings, &outline, &theme, images.len()).await
                 .unwrap_or_else(|e| {
                     eprintln!("[design_agent fallback] {}", e);
                     vec![] // graceful fallback — slides still generate without specs
@@ -384,6 +373,7 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             app_ready,
             generate_deck_v2,

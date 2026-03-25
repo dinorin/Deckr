@@ -1,59 +1,141 @@
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{AgentMessage, DeckTheme, SlideOutline, call_llm, safe_trunc};
 use crate::settings::AppSettings;
 
-#[derive(Debug, Clone)]
+// ── Public types ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecoSpec {
+    pub kind: String,       // "circle" | "rect" | "line" | "stripe" | "dots"
+    #[serde(default)] pub x: i32,
+    #[serde(default)] pub y: i32,
+    #[serde(default)] pub w: i32,
+    #[serde(default)] pub h: i32,
+    #[serde(default = "default_color")] pub color: String,
+    #[serde(default = "default_angle")] pub angle: i32,
+}
+
+fn default_color() -> String { "rgba(255,255,255,0.1)".into() }
+fn default_angle() -> i32 { 45 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlideDesignSpec {
-    pub layout_variant: String,
-    pub accent_hex: String,
+    /// One of: title-hero | title-split | bullets | bullets-icon |
+    ///         content-right | content-left | two-column | quote |
+    ///         icon-grid | image-full | stat-cards | closing
+    pub layout: String,
+    /// Full CSS background value (gradient or solid)
     pub bg_css: String,
-    pub deco: String,
+    /// Solid hex for data-bg-color fallback
+    pub bg_hex: String,
+    pub accent: String,
+    pub text_primary: String,
+    pub text_secondary: String,
+    pub font: String,
+    /// "none" | "dark" | "light"
+    pub overlay: String,
+    pub deco: Vec<DecoSpec>,
     pub mood: String,
 }
 
-const SYSTEM_PROMPT: &str = r##"You are a world-class presentation visual designer. Given slide outlines and a theme, output a JSON array of per-slide design specs.
+// ── System prompt ──────────────────────────────────────────────────────────────
 
-Return EXACTLY this format - no markdown, no explanation, ONLY the JSON array:
+const SYSTEM_PROMPT: &str = r##"You are a world-class presentation visual designer.
+Output ONLY a JSON array of per-slide design specs. No markdown, no explanation, no code fences.
+
+## Available layouts — choose based on slide type
+"title-hero"    → title slides: full-canvas hero, centered title + subtitle, dramatic
+"title-split"   → title slides: title on left half, solid accent panel on right half
+"bullets"       → bullets/content: title + up to 5 plain text bullets
+"bullets-icon"  → bullets/content: title + up to 5 bullets each with a Lucide icon
+"content-right" → content/image: text left half, image right half
+"content-left"  → content/image: image left half, text right half
+"two-column"    → two-column: title + two equal columns
+"quote"         → quote: large italic quote centered, attribution below
+"icon-grid"     → any: title + 4 icon+label cards in a row
+"image-full"    → image/content: title + large image + caption
+"stat-cards"    → any: title + 3 large stat numbers side by side
+"closing"       → closing slides: large centered message + subtitle
+
+## Deco element kinds (for the deco array)
+"circle"  — blurred circle: x,y=center  w=h=diameter
+"rect"    — solid rectangle: x,y=top-left  w,h=size
+"line"    — horizontal bar: x,y=position  w=length  h=thickness(1-4)
+"stripe"  — diagonal bar: x,y=top-left  w,h=bounding box  angle=degrees
+"dots"    — dot grid: x,y=top-left  w,h=coverage area
+
+## Output format — ONLY the JSON array, N objects
 [
   {
     "index": 0,
-    "layout_variant": "hero-centered | hero-image-right | hero-image-left | stat-center | grid-icons | timeline | quote-large | split-diagonal | full-bleed-image | minimal-text",
-    "accent_hex": "a hex color e.g. #f59e0b",
-    "bg_css": "CSS background value e.g. linear-gradient(135deg,#0f0f2e 0%,#1a1a3e 100%)",
-    "deco": "1-sentence desc of decorative elements e.g. large blurred circle top-right, thin rule below title",
-    "mood": "bold | calm | dramatic | playful | minimal"
+    "layout": "title-hero",
+    "bg_css": "linear-gradient(135deg,#0f172a 0%,#1e293b 100%)",
+    "bg_hex": "#0f172a",
+    "accent": "#6366f1",
+    "text_primary": "#ffffff",
+    "text_secondary": "#94a3b8",
+    "font": "Montserrat",
+    "overlay": "none",
+    "deco": [
+      {"kind":"circle","x":820,"y":-40,"w":320,"h":320,"color":"rgba(99,102,241,0.15)"},
+      {"kind":"circle","x":-30,"y":500,"w":200,"h":200,"color":"rgba(139,92,246,0.1)"},
+      {"kind":"line","x":40,"y":520,"w":880,"h":2,"color":"#6366f1"}
+    ],
+    "mood": "dramatic"
   }
 ]
 
-Rules:
-- MUST have exactly N objects (one per slide)
-- Make each slide visually DISTINCT - vary colors, layouts, moods
-- Title slide: dramatic, large, impactful
-- Closing slide: warm, memorable
-- Vary accent_hex across slides - don't repeat the same color twice in a row
-- bg_css can be gradient or solid - mix both for variety
-- deco should be concrete and diverse: geometric shapes, blurred orbs, diagonal lines, dot grids, icon watermarks
-- Keep text readable: if bg is light, accent should be dark and vice versa"##;
+## Design rules
+- Exactly N objects, one per slide, matching index order
+- Match layout to slide type (see table above) — vary between similar options
+- Make each slide visually DISTINCT: vary bg gradients, accent colors, deco shapes
+- bg_hex must be the darkest/most representative hex in bg_css
+- text_primary must contrast clearly with bg_hex (dark bg → #ffffff or light color; light bg → #1e293b or dark)
+- text_secondary is a muted/dimmer version of text_primary
+- accent must pop against the background — high contrast
+- Deco should be subtle: use low-opacity colors (rgba with 0.05–0.2 alpha)
+- 2–4 deco elements per slide is ideal — avoid clutter
+- overlay: use "dark" only when a full-bleed image needs text readable over it; otherwise "none""##;
+
+// ── Run ────────────────────────────────────────────────────────────────────────
 
 pub async fn run(
     settings: &AppSettings,
     outline: &[SlideOutline],
     theme: &DeckTheme,
+    image_count: usize,
 ) -> Result<Vec<SlideDesignSpec>, String> {
     let slides_summary: Vec<String> = outline.iter().enumerate().map(|(i, s)| {
         format!("{}: [{}] \"{}\"", i, s.slide_type, s.title)
     }).collect();
 
+    // Tell design agent how many images are available so it picks image layouts wisely.
+    // Exclude title/closing/quote from the eligible count to reflect actual distribution.
+    let eligible_for_image = outline.iter()
+        .filter(|s| !matches!(s.slide_type.as_str(), "title" | "closing" | "quote"))
+        .count();
+    let image_hint = if image_count == 0 {
+        "\nImages: 0 real images — for slides that need an image, builder will use ai-gen-image.".to_string()
+    } else {
+        format!(
+            "\nImages: {img} real image(s) available for {elig} eligible slides (non-title/closing/quote). \
+             Assign image-compatible layouts (content-right, content-left, image-full) to the first {img} eligible slides. \
+             Remaining eligible slides can use bullets/bullets-icon/two-column (builder will use ai-gen-image for them if needed).",
+            img = image_count, elig = eligible_for_image
+        )
+    };
+
     let user_msg = format!(
-        "Design specs for {total} slides.\n\nTheme: {style} | bg:{bg} | primary:{pri} | secondary:{sec} | accent:{acc} | font:{font}\n\nSlide outline:\n{slides}\n\nReturn ONLY a JSON array of {total} design objects.",
+        "Design {total} slides.\n\nTheme: {style} | font:{font}\nBase colors: bg={bg} primary={pri} accent={acc}{image_hint}\n\nSlides:\n{slides}\n\nReturn ONLY a JSON array of {total} objects.",
         total  = outline.len(),
         style  = theme.style,
+        font   = theme.font_family,
         bg     = theme.bg_color,
         pri    = theme.primary_color,
-        sec    = theme.secondary_color,
         acc    = theme.accent_color,
-        font   = theme.font_family,
+        image_hint = image_hint,
         slides = slides_summary.join("\n"),
     );
 
@@ -64,6 +146,8 @@ pub async fn run(
     let raw = resp.text.unwrap_or_default();
     parse_design_specs(&raw, outline.len())
 }
+
+// ── Parse ──────────────────────────────────────────────────────────────────────
 
 fn parse_design_specs(raw: &str, expected: usize) -> Result<Vec<SlideDesignSpec>, String> {
     let s = raw.trim();
@@ -77,29 +161,43 @@ fn parse_design_specs(raw: &str, expected: usize) -> Result<Vec<SlideDesignSpec>
     } else { s };
 
     let arr: Value = serde_json::from_str(cleaned)
-        .map_err(|e| format!("Design agent parse error: {}. Raw: {}", e, safe_trunc(&raw, 300)))?;
+        .map_err(|e| format!("Design agent parse: {}. Raw: {}", e, safe_trunc(raw, 300)))?;
 
-    let items = arr.as_array()
-        .ok_or("Design agent: expected JSON array")?;
+    let items = arr.as_array().ok_or("Design agent: expected JSON array")?;
+
+    let parse_deco = |v: &Value| -> Vec<DecoSpec> {
+        v.as_array().map(|arr| {
+            arr.iter().filter_map(|d| serde_json::from_value(d.clone()).ok()).collect()
+        }).unwrap_or_default()
+    };
 
     let mut specs: Vec<SlideDesignSpec> = items.iter().map(|v| SlideDesignSpec {
-        layout_variant: v["layout_variant"].as_str().unwrap_or("hero-centered").to_string(),
-        accent_hex:     v["accent_hex"].as_str().unwrap_or("#6366f1").to_string(),
-        bg_css:         v["bg_css"].as_str().unwrap_or("").to_string(),
-        deco:           v["deco"].as_str().unwrap_or("").to_string(),
+        layout:         v["layout"].as_str().unwrap_or("bullets").to_string(),
+        bg_css:         v["bg_css"].as_str().unwrap_or("#0f0f1f").to_string(),
+        bg_hex:         v["bg_hex"].as_str().unwrap_or("#0f0f1f").to_string(),
+        accent:         v["accent"].as_str().unwrap_or("#6366f1").to_string(),
+        text_primary:   v["text_primary"].as_str().unwrap_or("#ffffff").to_string(),
+        text_secondary: v["text_secondary"].as_str().unwrap_or("#94a3b8").to_string(),
+        font:           v["font"].as_str().unwrap_or("Inter").to_string(),
+        overlay:        v["overlay"].as_str().unwrap_or("none").to_string(),
+        deco:           parse_deco(&v["deco"]),
         mood:           v["mood"].as_str().unwrap_or("bold").to_string(),
     }).collect();
 
     while specs.len() < expected {
         specs.push(SlideDesignSpec {
-            layout_variant: "hero-centered".into(),
-            accent_hex: "#6366f1".into(),
-            bg_css: String::new(),
-            deco: String::new(),
-            mood: "bold".into(),
+            layout:         "bullets".into(),
+            bg_css:         "#0f0f1f".into(),
+            bg_hex:         "#0f0f1f".into(),
+            accent:         "#6366f1".into(),
+            text_primary:   "#ffffff".into(),
+            text_secondary: "#94a3b8".into(),
+            font:           "Inter".into(),
+            overlay:        "none".into(),
+            deco:           vec![],
+            mood:           "bold".into(),
         });
     }
     specs.truncate(expected);
-
     Ok(specs)
 }

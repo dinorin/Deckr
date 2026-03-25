@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronDown, FileText } from 'lucide-react';
+import { ArrowLeft, ChevronDown, FileText, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ChatInputArea } from './ChatInputArea';
 import { cn } from '../lib/utils';
@@ -20,6 +20,8 @@ interface StartScreenProps {
   onSend: (text: string) => void;
   onStop: () => void;
   onOpenSession: (id: string) => void;
+  onDeleteSession: (id: string) => void;
+  onDeleteAllSessions: () => void;
   onOpenSettings: () => void;
   onModelChange: (provider: string, model: string) => void;
   onNumSlidesChange: (n: number) => void;
@@ -29,7 +31,7 @@ interface StartScreenProps {
 export function StartScreen({
   sessions, activeSessionId, input, isLoading, currentModel, isConfigured,
   availableModels, numSlides, language,
-  onChange, onSend, onStop, onOpenSession, onOpenSettings,
+  onChange, onSend, onStop, onOpenSession, onDeleteSession, onDeleteAllSessions, onOpenSettings,
   onModelChange, onNumSlidesChange, onLanguageChange,
 }: StartScreenProps) {
   const activeSession = activeSessionId ? sessions.find(s => s.id === activeSessionId) : undefined;
@@ -148,20 +150,41 @@ export function StartScreen({
         {/* Recent sessions */}
         {recent.length > 0 && (
           <div className={activeSession ? 'mt-4' : 'mt-8'}>
-            <p className="text-[11px] text-fg-4 font-medium uppercase tracking-wider mb-2">Recent</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] text-fg-4 font-medium uppercase tracking-wider">Recent</p>
+              <button
+                onClick={onDeleteAllSessions}
+                className="flex items-center gap-1 text-[11px] text-fg-5 hover:text-red-400 transition-colors"
+                title="Delete all"
+              >
+                <Trash2 size={11} />
+                <span>Clear all</span>
+              </button>
+            </div>
             <div className="space-y-0.5 max-h-48 overflow-y-auto">
               {recent.map(s => (
-                <button
+                <div
                   key={s.id}
-                  onClick={() => onOpenSession(s.id)}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-card transition-colors group"
+                  className="flex items-center gap-1 rounded-lg hover:bg-card transition-colors group"
                 >
-                  <FileText size={13} className="text-fg-5 shrink-0" />
-                  <span className="flex-1 text-[13px] text-fg-3 group-hover:text-fg-2 truncate transition-colors">{s.title}</span>
-                  {s.slideCount > 0 && (
-                    <span className="text-[11px] text-fg-5 shrink-0">{s.slideCount} slides</span>
-                  )}
-                </button>
+                  <button
+                    onClick={() => onOpenSession(s.id)}
+                    className="flex-1 flex items-center gap-3 px-3 py-2.5 text-left min-w-0"
+                  >
+                    <FileText size={13} className="text-fg-5 shrink-0" />
+                    <span className="flex-1 text-[13px] text-fg-3 group-hover:text-fg-2 truncate transition-colors">{s.title}</span>
+                    {s.slideCount > 0 && (
+                      <span className="text-[11px] text-fg-5 shrink-0">{s.slideCount} slides</span>
+                    )}
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); onDeleteSession(s.id); }}
+                    className="shrink-0 p-2 opacity-0 group-hover:opacity-100 text-fg-5 hover:text-red-400 transition-all"
+                    title="Delete"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               ))}
             </div>
           </div>

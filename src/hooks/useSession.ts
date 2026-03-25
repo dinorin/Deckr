@@ -77,6 +77,13 @@ export function useSession() {
     if (session.id === id) resetSession();
   }, [session.id, resetSession]);
 
+  const removeAllSessions = useCallback(async () => {
+    const all = await listSessions();
+    await Promise.all(all.map(s => deleteSession(s.id)));
+    setSessions([]);
+    resetSession();
+  }, [resetSession]);
+
   return {
     session,
     sessions,
@@ -89,5 +96,6 @@ export function useSession() {
     resetSession,
     switchToSession,
     removeSession,
+    removeAllSessions,
   };
 }

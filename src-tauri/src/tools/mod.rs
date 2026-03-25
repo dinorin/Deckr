@@ -290,6 +290,56 @@ async fn generate_image_getimg(prompt: &str, api_key: &str, _model: &str) -> Res
     Err(format!("GetImg no image. Response: {}", resp))
 }
 
+// ─── Image Validation + Color Analysis ───────────────────────────────────────
+
+/// Fetch each URL in parallel, skip broken ones, compute real avg_color/text_color.
+/// Returns only valid images, preserving order of successful fetches.
+pub async fn validate_and_build_images(urls: Vec<String>) -> Vec<ImageResult> {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(6))
+        .build() {
+            Ok(c) => std::sync::Arc::new(c),
+            Err(_) => return vec![],
+        };
+
+    let futs: Vec<_> = urls.into_iter().enumerate().map(|(i, url)| {
+        let client = client.clone();
+        async move {
+            let resp = client.get(&url).send().await.ok()?;
+            // Filter non-image content types and error status codes
+            let status = resp.status();
+            if !status.is_success() { return None; }
+            let ct = resp.headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            if !ct.starts_with("image/") { return None; }
+
+            let bytes = resp.bytes().await.ok()?;
+            // Reject tiny files (likely error pages or 1×1 placeholders)
+            if bytes.len() < 1024 { return None; }
+
+            let avg = average_color(&bytes);
+
+            // Get real dimensions from the decoded image
+            let (w, h) = {
+                use image::GenericImageView;
+                image::load_from_memory(&bytes)
+                    .ok()
+                    .map(|img| img.dimensions())
+                    .unwrap_or((1280, 720))
+            };
+
+            let desc = format!("Image {}", i + 1);
+            Some(ImageResult::new_with_color(url, w, h, desc, avg))
+        }
+    }).collect();
+
+    let results = futures::future::join_all(futs).await;
+    results.into_iter().flatten().collect()
+}
+
 // ─── Tool Definitions for Orchestrator ───────────────────────────────────────
 
 pub fn orchestrator_tools_openai() -> Value {

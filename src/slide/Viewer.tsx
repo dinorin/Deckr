@@ -85,7 +85,22 @@ export function PresentationViewer({ deckData, onClose }: ViewerProps) {
     const [kf, opts] = defs[anim] ?? defs['fade-in'];
     // wipe/split use clip-path, not opacity — make element opaque first
     if (anim === 'wipe-left' || anim === 'split') el.style.opacity = '1';
-    el.animate(kf, opts);
+    const animation = el.animate(kf, opts);
+
+    // fill:'forwards' keeps the final transform alive as an active animation,
+    // creating a new stacking context that breaks layer z-index ordering.
+    // Fix: commit styles into inline then cancel so no animation stacking context remains.
+    animation.finished.then(() => {
+      try { animation.commitStyles(); } catch { /* element removed */ }
+      animation.cancel();
+      // Remove identity transforms — they serve no visual purpose but create stacking contexts
+      const tr = el.style.transform;
+      if (!tr || tr === 'none' || /^(translateX|translateY|translateZ)\(0/.test(tr) || /^scale\(1\)/.test(tr)) {
+        el.style.removeProperty('transform');
+      }
+      // clip-path final value is always fully-visible; remove to avoid stacking context
+      el.style.removeProperty('clip-path');
+    }).catch(() => {});
   }, []);
 
   // ── Reveal elements for a given click number ─────────────────────────────
@@ -98,7 +113,11 @@ export function PresentationViewer({ deckData, onClose }: ViewerProps) {
       const dur = parseInt(t.dataset.duration || '500', 10);
       const anim = t.dataset.pptAnimation || 'fade-in';
       t.classList.remove('ppt-hidden');
-      t.style.opacity = '';
+      // Clear any leftover inline styles from reset so animation starts clean
+      t.style.removeProperty('opacity');
+      t.style.removeProperty('transform');
+      t.style.removeProperty('clip-path');
+      t.style.removeProperty('visibility');
       animateElement(t, anim, dur);
     });
   }, [animateElement]);
@@ -110,8 +129,10 @@ export function PresentationViewer({ deckData, onClose }: ViewerProps) {
     el.querySelectorAll('[data-click="0"]').forEach(target => {
       const t = target as HTMLElement;
       t.classList.remove('ppt-hidden');
-      t.style.opacity = '';
-      
+      t.style.removeProperty('opacity');
+      t.style.removeProperty('transform');
+      t.style.removeProperty('clip-path');
+      t.style.removeProperty('visibility');
       const dur = parseInt(t.dataset.duration || '500', 10);
       const anim = t.dataset.pptAnimation || 'fade-in';
       animateElement(t, anim, dur);
@@ -125,11 +146,12 @@ export function PresentationViewer({ deckData, onClose }: ViewerProps) {
     el.querySelectorAll('[data-click]').forEach(target => {
       const t = target as HTMLElement;
       if (parseInt(t.dataset.click || '0', 10) > 0) {
+        // Cancel first so fill:'forwards' doesn't win over inline style removal
         t.getAnimations().forEach(a => a.cancel());
-        t.style.opacity = '0';
-        t.style.visibility = 'hidden';
-        t.style.transform = '';
-        t.style.clipPath = '';
+        t.style.removeProperty('opacity');
+        t.style.removeProperty('transform');
+        t.style.removeProperty('clip-path');
+        t.style.removeProperty('visibility');
         t.classList.add('ppt-hidden');
       }
     });

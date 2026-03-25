@@ -25,7 +25,7 @@ export default function App() {
 
   const pendingSend = useRef<string | null>(null);
 
-  const { session, sessions, messages, deckData, notes, setMessages, setDeckData, setNotes, resetSession, switchToSession, removeSession } = useSession();
+  const { session, sessions, messages, deckData, notes, setMessages, setDeckData, setNotes, resetSession, switchToSession, removeSession, removeAllSessions } = useSession();
 
   const fetchAllModels = useCallback(async () => {
     const s = await getSettings();
@@ -83,15 +83,21 @@ export default function App() {
 
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportToast, setExportToast] = useState<string | null>(null);
 
   const handleExport = useCallback(async () => {
     if (!deckData || isExporting) return;
     setIsExporting(true);
     setExportProgress(0);
     try {
-      await exportToPptx(deckData, (current, total) => {
+      const savedPath = await exportToPptx(deckData, (current, total) => {
         setExportProgress(total > 0 ? Math.round((current / total) * 100) : 0);
       });
+      if (savedPath) {
+        const filename = savedPath.replace(/\\/g, '/').split('/').pop() ?? 'presentation.pptx';
+        setExportToast(`Saved: ${filename}`);
+        setTimeout(() => setExportToast(null), 4000);
+      }
     }
     catch (e) { console.error('Export failed:', e); }
     finally { setIsExporting(false); setExportProgress(0); }
@@ -218,6 +224,8 @@ export default function App() {
           onSend={handleStartSend}
           onStop={handleStop}
           onOpenSession={handleOpenSession}
+          onDeleteSession={removeSession}
+          onDeleteAllSessions={removeAllSessions}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onModelChange={handleModelChange}
           onNumSlidesChange={handleNumSlidesChange}
@@ -270,6 +278,15 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         onSaved={handleSettingsSaved}
       />
+
+      {exportToast && (
+        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-2.5 bg-surface border border-line rounded-xl shadow-xl text-[13px] text-fg-2 animate-fade-in">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-green-400 shrink-0">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          {exportToast}
+        </div>
+      )}
     </div>
   );
 }
