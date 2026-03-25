@@ -5,6 +5,7 @@
 Deckr is a desktop app that turns a prompt into a fully animated, PowerPoint-compatible slide deck using a pipeline of specialized AI agents — each responsible for one part of the job.
 
 ---
+https://github.com/user-attachments/assets/f68ec0c2-5d52-472d-a841-d748b3e8e969
 
 ## Features
 
