@@ -2,7 +2,6 @@ use serde_json::Value;
 
 use super::{AgentMessage, call_llm};
 use crate::settings::AppSettings;
-use crate::tools;
 
 // ─── Orchestrator: single call to decide action + extract keywords ─────────────
 // No search loop here — search runs externally in lib.rs (parallel workers).
@@ -51,6 +50,7 @@ pub async fn run(
     user_message: &str,
     history: &[AgentMessage],
     current_deck: &Option<Value>,
+    language: &str,
 ) -> Result<OrchestratorResult, String> {
     let provider = settings.llm.provider.to_lowercase();
     let tools = if provider == "gemini" {
@@ -79,7 +79,8 @@ pub async fn run(
         }
     }
 
-    let resp = call_llm(settings, SYSTEM_PROMPT, &history_with_ctx, &tools).await?;
+    let system_prompt = format!("{}\n\nRespond in: {}", SYSTEM_PROMPT, language);
+    let resp = call_llm(settings, &system_prompt, &history_with_ctx, &tools).await?;
 
     // No function call → treat as message
     if resp.function_calls.is_empty() {

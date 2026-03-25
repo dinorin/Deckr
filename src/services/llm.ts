@@ -8,10 +8,17 @@ export interface GenerateResult {
   notes: string;
 }
 
+export interface SearchLink {
+  title: string;
+  url: string;
+}
+
 export interface AgentLogEntry {
   agent: string;
   status: 'thinking' | 'done' | 'error';
   message: string;
+  images?: string[];
+  links?: SearchLink[];
 }
 
 export interface MultiAgentResult extends GenerateResult {

@@ -66,3 +66,8 @@
   ::-webkit-scrollbar-thumb { background: var(--line-hi); border-radius: 9999px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--fg-4); }
 }
+
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}

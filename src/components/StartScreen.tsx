@@ -1,4 +1,4 @@
-import { ChevronDown, FileText } from 'lucide-react';
+import { ArrowLeft, ChevronDown, FileText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ChatInputArea } from './ChatInputArea';
 import { cn } from '../lib/utils';
@@ -8,6 +8,7 @@ const SLIDE_OPTIONS = [5, 8, 10, 12, 15, 20];
 
 interface StartScreenProps {
   sessions: SessionSummary[];
+  activeSessionId?: string;
   input: string;
   isLoading: boolean;
   currentModel: string;
@@ -26,12 +27,13 @@ interface StartScreenProps {
 }
 
 export function StartScreen({
-  sessions, input, isLoading, currentModel, isConfigured,
+  sessions, activeSessionId, input, isLoading, currentModel, isConfigured,
   availableModels, numSlides, language,
   onChange, onSend, onStop, onOpenSession, onOpenSettings,
   onModelChange, onNumSlidesChange, onLanguageChange,
 }: StartScreenProps) {
-  const recent = sessions.slice(0, 8);
+  const activeSession = activeSessionId ? sessions.find(s => s.id === activeSessionId) : undefined;
+  const recent = sessions.filter(s => s.id !== activeSessionId).slice(0, 8);
   const [slideDropdownOpen, setSlideDropdownOpen] = useState(false);
   const slideRef = useRef<HTMLDivElement>(null);
 
@@ -126,9 +128,26 @@ export function StartScreen({
           </div>
         </div>
 
+        {/* Active session — back to chat */}
+        {activeSession && (
+          <div className="mt-8">
+            <p className="text-[11px] text-fg-4 font-medium uppercase tracking-wider mb-2">Current</p>
+            <button
+              onClick={() => onOpenSession(activeSession.id)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left bg-cta/8 hover:bg-cta/14 border border-cta/20 transition-colors group"
+            >
+              <ArrowLeft size={13} className="text-cta shrink-0" />
+              <span className="flex-1 text-[13px] text-fg-2 group-hover:text-fg truncate transition-colors font-medium">{activeSession.title}</span>
+              {activeSession.slideCount > 0 && (
+                <span className="text-[11px] text-cta/70 shrink-0">{activeSession.slideCount} slides</span>
+              )}
+            </button>
+          </div>
+        )}
+
         {/* Recent sessions */}
         {recent.length > 0 && (
-          <div className="mt-8">
+          <div className={activeSession ? 'mt-4' : 'mt-8'}>
             <p className="text-[11px] text-fg-4 font-medium uppercase tracking-wider mb-2">Recent</p>
             <div className="space-y-0.5 max-h-48 overflow-y-auto">
               {recent.map(s => (

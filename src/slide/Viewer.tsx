@@ -3,8 +3,10 @@
  * PowerPoint-like slide viewer with click-to-reveal animations and transitions.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createIcons, icons as lucideIcons } from 'lucide';
 import './animations.css';
 import type { DeckData, Slide } from '../types';
+import { fitTextToLayers } from './utils';
 
 interface ViewerProps {
   deckData: DeckData;
@@ -218,6 +220,11 @@ export function PresentationViewer({ deckData, onClose }: ViewerProps) {
     if (!currentSlide) return;
     // Give React a tick to inject the HTML into the DOM
     const timer = setTimeout(() => {
+      const el = slideRefs.current.get(state.slideIndex);
+      if (el) {
+        createIcons({ icons: lucideIcons, root: el });
+        fitTextToLayers(el);
+      }
       resetSlide(state.slideIndex);
       revealImmediateElements(state.slideIndex);
       const seq = getClickSequenceForSlide(state.slideIndex);

@@ -1,7 +1,6 @@
 #![recursion_limit = "512"]
 mod agents;
 mod llm;
-mod pptx;
 mod settings;
 mod slide;
 mod storage;
@@ -25,10 +24,20 @@ async fn app_ready(app: tauri::AppHandle) {
 // ─── Multi-Agent Generate ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SearchLink {
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AgentLogEntry {
     pub agent: String,
     pub status: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<SearchLink>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,7 +62,7 @@ async fn generate_deck_v2(
     language: String,
     num_slides: u32,
 ) -> Result<MultiAgentResult, String> {
-    let mut settings = settings::load_settings_raw(&app);
+let mut settings = settings::load_settings_raw(&app);
 
     if settings.llm.api_key.trim() == settings::MASKED_SENTINEL {
         settings.llm.api_key = settings::resolve_api_key(
@@ -82,6 +91,8 @@ async fn generate_deck_v2(
                 agent: $agent.into(),
                 status: $status.into(),
                 message: $msg.into(),
+                images: Vec::new(),
+                links: Vec::new(),
             };
             let _ = app.emit("agent-status", &entry);
             log.push(entry);
@@ -109,7 +120,7 @@ async fn generate_deck_v2(
         .map(|m| m.content.as_str())
         .unwrap_or("");
 
-    let orch = agents::orchestrator::run(&settings, last_user_msg, &history, &current_deck).await
+    let orch = agents::orchestrator::run(&settings, last_user_msg, &history, &current_deck, &effective_language).await
         .map_err(|e| format!("Orchestrator: {}", e))?;
 
     match orch.action {
@@ -139,14 +150,14 @@ async fn generate_deck_v2(
             let tavily_key = settings.search.get("tavily").cloned().unwrap_or_default();
             let keywords = params.keywords.clone();
             // Use the first generated keyword for image search to get relevant results, instead of the long user prompt
-            let topic_for_img = params.keywords.first().cloned().unwrap_or_else(|| params.topic.clone());
+            let _topic_for_img = params.keywords.first().cloned().unwrap_or_else(|| params.topic.clone());
 
-            let (web_research, tavily_imgs) = tools::parallel_tavily_search(keywords, &tavily_key).await;
+            let (web_research, tavily_imgs, tavily_links) = tools::parallel_tavily_search(keywords, &tavily_key).await;
 
             let mut images: Vec<tools::ImageResult> = Vec::new();
-            for (i, t_url) in tavily_imgs.into_iter().enumerate() {
+            for (i, t_url) in tavily_imgs.iter().enumerate() {
                 images.push(tools::ImageResult {
-                    url: t_url,
+                    url: t_url.clone(),
                     width: 1280,
                     height: 720,
                     aspect_ratio: 1280.0 / 720.0,
@@ -159,10 +170,21 @@ async fn generate_deck_v2(
             let image_count = images.len();
             let research_len = web_research.chars().count();
 
-            emit!("search", "done", format!(
-                "Found {} images · {} chars of research",
-                image_count, research_len
-            ));
+            // Emit search-done with rich data (image URLs + web links)
+            {
+                let entry = AgentLogEntry {
+                    agent: "search".into(),
+                    status: "done".into(),
+                    message: format!("Found {} images · {} chars of research", image_count, research_len),
+                    images: tavily_imgs.iter().take(6).cloned().collect(),
+                    links: tavily_links.iter().take(4).map(|(t, u)| SearchLink {
+                        title: t.clone(),
+                        url: u.clone(),
+                    }).collect(),
+                };
+                let _ = app.emit("agent-status", &entry);
+                log.push(entry);
+            }
 
             // ── Phase 2: Content planning ──────────────────────────────────
             emit!("content", "thinking", format!(
@@ -187,13 +209,8 @@ async fn generate_deck_v2(
 
             emit!("content", "done", format!("{} slides planned", outline.len()));
 
-            // ── Phase 3: Theme & animation design ─────────────────────────
-            emit!("design", "thinking", "Designing layout & animations…");
-
-            let (theme, anim_plan) = agents::animation_agent::run(&settings, &ctx, &outline).await
-                .map_err(|e| format!("Animation agent: {}", e))?;
-
-            emit!("design", "done", format!("{} theme · {} slide plans", theme.style, anim_plan.len()));
+            // ── Phase 3: Derive theme (no LLM call) ───────────────────────
+            let theme = agents::html_agent::derive_theme(&params.style_hint, &params.topic);
 
             // Signal frontend to open the preview panel immediately
             let early_title = outline.first()
@@ -213,19 +230,26 @@ async fn generate_deck_v2(
                 }
             }));
 
-            // ── Phase 4: Parallel slide generation ────────────────────────
-            emit!("slides", "thinking", format!(
-                "Rendering {} slides in parallel…",
-                outline.len()
-            ));
+            // ── Phase 4: Design specs ──────────────────────────────────────
+            emit!("design", "thinking", format!("Designing {} slides…", outline.len()));
+
+            let design_specs = agents::design_agent::run(&settings, &outline, &theme).await
+                .unwrap_or_else(|e| {
+                    eprintln!("[design_agent fallback] {}", e);
+                    vec![] // graceful fallback — slides still generate without specs
+                });
+
+            emit!("design", "done", format!("{} visual specs ready", design_specs.len()));
+
+            // ── Phase 5: Slide generation ──────────────────────────────────
+            emit!("slides", "thinking", format!("Rendering {} slides…", outline.len()));
 
             let mut html_ctx = ctx.clone();
             html_ctx.slide_outline = outline.clone();
             html_ctx.theme = Some(theme.clone());
-            html_ctx.animation_plan = anim_plan.clone();
 
             let deck = agents::html_agent::run(
-                &app, &settings, &html_ctx, &outline, &theme, &anim_plan, &images
+                &app, &settings, &html_ctx, &outline, &theme, &images, &design_specs
             ).await.map_err(|e| format!("HTML agent: {}", e))?;
 
             let valid_slides: Vec<_> = deck.slides.iter()
@@ -333,31 +357,38 @@ async fn generate_ai_image(app: tauri::AppHandle, prompt: String) -> Result<Stri
     Err("No image provider configured. Add an API key in Settings → Image.".to_string())
 }
 
-// ─── PPTX Export ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PptxSlideInput {
-    pub html: String,
-    pub index: usize,
-}
+// ─── Image proxy (bypass CORS for html2canvas) ───────────────────────────────
 
 #[tauri::command]
-async fn export_pptx(title: String, slides: Vec<PptxSlideInput>) -> Result<Vec<u8>, String> {
-    let pptx_slides: Vec<pptx::builder::PptxSlide> = slides.iter()
-        .map(|s| pptx::builder::parse_slide_html(&s.html, s.index))
-        .collect();
-    pptx::build_pptx(&title, &pptx_slides)
+async fn fetch_image_base64(url: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    let ct = resp.headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/jpeg")
+        .split(';').next().unwrap_or("image/jpeg")
+        .to_string();
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    use base64::{Engine as _, engine::general_purpose};
+    let b64 = general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", ct, b64))
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             app_ready,
             generate_deck_v2,
             generate_ai_image,
-            export_pptx,
+            fetch_image_base64,
             llm::generate_deck,
             llm::fetch_models,
             settings::get_settings,

@@ -1,6 +1,6 @@
 pub mod orchestrator;
 pub mod content_agent;
-pub mod animation_agent;
+pub mod design_agent;
 pub mod html_agent;
 pub mod edit_agent;
 pub mod lint;
@@ -10,6 +10,14 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 use crate::settings::AppSettings;
+
+// ─── UTF-8 safe truncation ────────────────────────────────────────────────────
+/// Truncate `s` to at most `max_bytes` bytes, stepping back to a valid char boundary.
+pub(crate) fn safe_trunc(s: &str, max_bytes: usize) -> &str {
+    let mut end = s.len().min(max_bytes);
+    while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+    &s[..end]
+}
 
 // ─── Shared Types ─────────────────────────────────────────────────────────────
 
@@ -28,33 +36,6 @@ pub struct SlideOutline {
     pub bullets: Vec<String>,
     pub notes: String,
     pub transition: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ElementAnimationPlan {
-    pub element_type: String,
-    pub content: String,
-    pub animation: String,
-    pub click_order: u32,
-    pub duration_ms: u32,
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-    pub font_size: u32,
-    pub bold: bool,
-    pub italic: bool,
-    pub color: String,
-    pub align: String,
-    pub font_family: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SlideAnimationPlan {
-    pub index: usize,
-    pub bg_color: String,
-    pub transition: String,
-    pub elements: Vec<ElementAnimationPlan>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -80,7 +61,6 @@ pub struct AgentContext {
     pub image_refs: Vec<String>,
     pub slide_outline: Vec<SlideOutline>,
     pub theme: Option<DeckTheme>,
-    pub animation_plan: Vec<SlideAnimationPlan>,
     pub current_deck: Option<Value>,
     pub edit_instructions: String,
     pub is_edit: bool,
@@ -198,11 +178,11 @@ async fn call_gemini(
         .map_err(|e| format!("Read error: {}", e))?;
 
     if !status.is_success() {
-        return Err(format!("Gemini HTTP {}: {}", status, &text[..text.len().min(500)]));
+        return Err(format!("Gemini HTTP {}: {}", status, safe_trunc(&text, 500)));
     }
 
     let json: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Gemini parse error: {}. Body: {}", e, &text[..text.len().min(300)]))?;
+        .map_err(|e| format!("Gemini parse error: {}. Body: {}", e, safe_trunc(&text, 300)))?;
 
     if let Some(err) = json.get("error") {
         return Err(format!("Gemini error: {}", err["message"].as_str().unwrap_or("Unknown")));
@@ -210,7 +190,7 @@ async fn call_gemini(
 
     let candidate = &json["candidates"][0];
     if candidate.is_null() {
-        return Err(format!("Gemini no candidates. Body: {}", &text[..text.len().min(400)]));
+        return Err(format!("Gemini no candidates. Body: {}", safe_trunc(&text, 400)));
     }
 
     let mut text_out = None;
@@ -287,11 +267,11 @@ async fn call_openai_compat(
         .map_err(|e| format!("Read error: {}", e))?;
 
     if !status.is_success() {
-        return Err(format!("HTTP {}: {}", status, &text[..text.len().min(500)]));
+        return Err(format!("HTTP {}: {}", status, safe_trunc(&text, 500)));
     }
 
     let json: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Parse: {}. Body: {}", e, &text[..text.len().min(300)]))?;
+        .map_err(|e| format!("Parse: {}. Body: {}", e, safe_trunc(&text, 300)))?;
 
     if let Some(err) = json.get("error") {
         return Err(format!("API error: {}", err["message"].as_str().unwrap_or("Unknown")));
@@ -299,7 +279,7 @@ async fn call_openai_compat(
 
     let msg = &json["choices"][0]["message"];
     if msg.is_null() {
-        return Err(format!("No choices in response. Body: {}", &text[..text.len().min(400)]));
+        return Err(format!("No choices in response. Body: {}", safe_trunc(&text, 400)));
     }
 
     let text_content = msg["content"].as_str().map(|s| s.to_string());

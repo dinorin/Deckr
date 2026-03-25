@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::{AgentContext, AgentMessage, SlideOutline, call_llm};
+use super::{AgentContext, AgentMessage, SlideOutline, call_llm, safe_trunc};
 use crate::settings::AppSettings;
 
 const SYSTEM_PROMPT: &str = r#"You are the Content Agent for Deckr. Output ONLY valid JSON — no markdown, no explanation.
@@ -37,7 +37,7 @@ pub async fn run(
     let research_section = if ctx.web_research.is_empty() {
         String::new()
     } else {
-        format!("\n\n## Research (use this to enrich slides with facts/data):\n{}", &ctx.web_research[..ctx.web_research.len().min(3000)])
+        format!("\n\n## Research (use this to enrich slides with facts/data):\n{}", safe_trunc(&ctx.web_research, 3000))
     };
 
     let image_hint = if ctx.image_refs.is_empty() {
@@ -68,10 +68,10 @@ pub async fn run(
 
     let json_str = extract_json_array(&raw);
     let arr: Value = serde_json::from_str(&json_str)
-        .map_err(|e| format!("Content agent parse error: {}. Raw: {}", e, &raw[..raw.len().min(400)]))?;
+        .map_err(|e| format!("Content agent parse error: {}. Raw: {}", e, safe_trunc(&raw, 400)))?;
 
     let slides_arr = arr.as_array()
-        .ok_or_else(|| format!("Content agent: expected JSON array, got: {}", &raw[..raw.len().min(200)]))?;
+        .ok_or_else(|| format!("Content agent: expected JSON array, got: {}", safe_trunc(&raw, 200)))?;
 
     let mut outlines = Vec::new();
     for (i, s) in slides_arr.iter().enumerate() {

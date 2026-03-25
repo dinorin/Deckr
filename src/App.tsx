@@ -49,7 +49,7 @@ export default function App() {
     setAvailableModels(results);
   }, []);
 
-  const { isLoading, agentStatus, agentLog, handleSend, handleStop } = useLlm({
+  const { isLoading, agentStatus, agentLog, imageStatus, handleSend, handleStop } = useLlm({
     messages,
     deckData,
     notes,
@@ -81,11 +81,21 @@ export default function App() {
     navigator.clipboard.writeText(text);
   }, []);
 
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+
   const handleExport = useCallback(async () => {
-    if (!deckData) return;
-    try { await exportToPptx(deckData); }
+    if (!deckData || isExporting) return;
+    setIsExporting(true);
+    setExportProgress(0);
+    try {
+      await exportToPptx(deckData, (current, total) => {
+        setExportProgress(total > 0 ? Math.round((current / total) * 100) : 0);
+      });
+    }
     catch (e) { console.error('Export failed:', e); }
-  }, [deckData]);
+    finally { setIsExporting(false); setExportProgress(0); }
+  }, [deckData, isExporting]);
 
   const handleSettingsSaved = useCallback((_p: string, m: string) => {
     getSettings().then(s => {
@@ -149,9 +159,10 @@ export default function App() {
 
   // From start screen: open existing session
   const handleOpenSession = useCallback(async (id: string) => {
+    handleStop(); // kill any in-flight generation before switching session
     await switchToSession(id);
     setView('app');
-  }, [switchToSession]);
+  }, [switchToSession, handleStop]);
 
   // Back to home
   const handleBack = useCallback(() => {
@@ -161,8 +172,25 @@ export default function App() {
   // Send from app view
   const handleAppSend = useCallback((text: string) => {
     setInput('');
+
+    // Resume intent: "resume", "resume [keyword]", "tiếp tục", etc.
+    const resumeMatch = text.trim().match(/^(?:resume|tiếp tục|tải lại|load|open|mở lại)(?:\s+(.+))?$/i);
+    if (resumeMatch) {
+      const keyword = resumeMatch[1]?.toLowerCase().trim();
+      const others = sessions.filter(s => s.id !== session.id);
+      const target = keyword
+        ? (others.find(s => s.title.toLowerCase().includes(keyword)) ?? others[0])
+        : others[0];
+      if (target) {
+        handleStop();
+        switchToSession(target.id);
+        return;
+      }
+      // No other sessions — fall through to AI
+    }
+
     handleSend(text, numSlides, language || 'auto');
-  }, [handleSend, numSlides, language]);
+  }, [handleSend, numSlides, language, sessions, session.id, switchToSession]);
 
   return (
     <div className="flex flex-col h-screen bg-bg text-fg overflow-hidden">
@@ -178,6 +206,7 @@ export default function App() {
       {view === 'start' ? (
         <StartScreen
           sessions={sessions}
+          activeSessionId={session.messages.length > 0 || session.deckData ? session.id : undefined}
           input={input}
           isLoading={isLoading}
           currentModel={model}
@@ -228,6 +257,9 @@ export default function App() {
               isOpen={true}
               onClose={handleBack}
               onExport={handleExport}
+              isExporting={isExporting}
+              exportProgress={exportProgress}
+              imageStatus={imageStatus}
             />
           </div>
         </div>

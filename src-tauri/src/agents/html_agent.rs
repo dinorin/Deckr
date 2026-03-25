@@ -1,9 +1,10 @@
-use futures::stream::{FuturesUnordered, StreamExt};
+use futures::StreamExt;
 use serde::Serialize;
 use serde_json::json;
 use tauri::Emitter;
 
-use super::{AgentContext, AgentMessage, DeckTheme, GeneratedDeck, GeneratedSlide, SlideAnimationPlan, SlideOutline, call_llm};
+use super::{AgentContext, AgentMessage, DeckTheme, GeneratedDeck, GeneratedSlide, SlideOutline, call_llm};
+use super::design_agent::SlideDesignSpec;
 use crate::settings::AppSettings;
 use crate::tools::ImageResult;
 
@@ -15,70 +16,195 @@ pub struct SlideReadyPayload {
     pub html: String,
 }
 
-// Prompt for generating a SINGLE slide's HTML
+// ── Merged: Layout Planner + Slide Builder ────────────────────────────────────
+
 const SLIDE_SYSTEM_PROMPT: &str = r##"You are a world-class slide designer. Output ONLY raw HTML for one 960×540 slide. No markdown, no explanation, no code fences.
+
+## Canvas: 960 × 540 px
+Safe zone: x ≥ 40, y ≥ 30, x+w ≤ 920, y+h ≤ 510.
+STRICT non-overlap: element B must have top_B ≥ top_A + height_A + 20.
+Side-by-side columns: left x+w ≤ 440, right x ≥ 520.
+
+## BEFORE writing HTML — compute a position table:
+  el | top | height | bottom(top+h)
+  ---|-----|--------|-------------
+  (fill this mentally, verify bottom_N + 20 ≤ top_N+1 for every pair)
+
+## Layout Templates — use EXACT pixel values below
+
+### title
+  bg       x=0   y=0   w=960 h=540
+  title    x=40  y=175 w=880 h=80  (font-size:56px) click=0 anim=fly-in-bottom
+  subtitle x=40  y=275 w=880 h=48  (font-size:28px) click=1 anim=fade-in
+  → bottom of subtitle = 323 ✓ (fits in 510)
+
+### content (text-left / image-right)
+  title  x=40  y=32  w=540 h=56  (font-size:40px) click=0 anim=wipe-left
+  body_1 x=40  y=108 w=520 h=48  (font-size:20px) click=1 anim=float-in
+  body_2 x=40  y=166 w=520 h=48  click=2 anim=float-in
+  body_3 x=40  y=224 w=520 h=48  click=3 anim=float-in
+  body_4 x=40  y=282 w=520 h=48  click=4 anim=float-in
+  image  x=590 y=32  w=330 h=400 click=0 anim=fade-in
+  → gaps: 108-88=20 ✓  166-156=10 ✗ → use exact values above
+
+### bullets (5 max)
+  title    x=40 y=32  w=880 h=56  (font-size:40px) click=0 anim=wipe-left
+  bullet_1 x=56 y=108 w=860 h=44  (font-size:20px) click=1 anim=fly-in-left
+  bullet_2 x=56 y=162 w=860 h=44  click=2 anim=fly-in-left
+  bullet_3 x=56 y=216 w=860 h=44  click=3 anim=fly-in-left
+  bullet_4 x=56 y=270 w=860 h=44  click=4 anim=fly-in-left
+  bullet_5 x=56 y=324 w=860 h=44  click=5 anim=fly-in-left
+
+### icon-grid (4 icons with labels)
+  title  x=40  y=32  w=880 h=56  click=0 anim=fade-in
+  icon_1 x=80  y=140 w=180 h=180 click=1 anim=zoom-in   (deco layer with Lucide icon centered)
+  icon_2 x=300 y=140 w=180 h=180 click=1 anim=zoom-in
+  icon_3 x=520 y=140 w=180 h=180 click=1 anim=zoom-in
+  icon_4 x=740 y=140 w=180 h=180 click=1 anim=zoom-in
+  label_1 x=80  y=328 w=180 h=40 click=1 anim=fade-in
+  label_2 x=300 y=328 w=180 h=40 click=1 anim=fade-in
+  label_3 x=520 y=328 w=180 h=40 click=1 anim=fade-in
+  label_4 x=740 y=328 w=180 h=40 click=1 anim=fade-in
+
+### two-column
+  title    x=40  y=32  w=880 h=56  click=0 anim=fade-in
+  lhead    x=40  y=108 w=400 h=40  (font-size:22px bold) click=1 anim=fly-in-left
+  lbody_1  x=40  y=158 w=400 h=44  click=2 anim=fly-in-left
+  lbody_2  x=40  y=212 w=400 h=44  click=3 anim=fly-in-left
+  lbody_3  x=40  y=266 w=400 h=44  click=4 anim=fly-in-left
+  rhead    x=520 y=108 w=400 h=40  click=1 anim=fly-in-right
+  rbody_1  x=520 y=158 w=400 h=44  click=2 anim=fly-in-right
+  rbody_2  x=520 y=212 w=400 h=44  click=3 anim=fly-in-right
+  rbody_3  x=520 y=266 w=400 h=44  click=4 anim=fly-in-right
+
+### quote
+  bar    x=40 y=130 w=6   h=160
+  quote  x=74 y=140 w=822 h=160 (font-size:30px italic center) click=0 anim=fade-in
+  author x=74 y=318 w=822 h=40  (font-size:18px right)         click=1 anim=float-in
+
+### image-full
+  title   x=40 y=32  w=880 h=56  click=0 anim=fly-in-top
+  image   x=40 y=108 w=880 h=360 click=0 anim=fade-in
+  caption x=40 y=480 w=880 h=26  (font-size:14px center) click=0 anim=appear
+
+### closing
+  title    x=40 y=185 w=880 h=80  (font-size:56px bold center) click=0 anim=zoom-in
+  subtitle x=40 y=285 w=880 h=48  (font-size:28px center)      click=1 anim=fade-in
+
+## Click / Reveal
+- click=0: appears on slide entry (titles, images, structural)
+- click=1,2,3…: revealed on Nth click
+- Max 6 clicks per slide.
 
 ## Slide wrapper
 <div class="ppt-slide" data-slide-index="N" data-bg-color="#hex" data-transition="fade|push|wipe|none"
-     style="position:relative;width:960px;height:540px;overflow:hidden;font-family:'Font',sans-serif;box-sizing:border-box;color:#fff;">
+     style="position:relative;width:960px;height:540px;overflow:hidden;box-sizing:border-box;font-family:'FONT',sans-serif;">
 
-## Typography & Content Length
-- CRITICAL: Keep text extremely concise! Max 15-20 words per text block. Viewers do not read paragraphs.
-- ALWAYS use proper semantic tags for text: <h1>, <h2>, <h3>, <p>, <li>.
-- STRICT Font Size Rules for 960x540 canvas (set via inline style AND data-ppt-font-size):
-  - <h1>: 48px to 60px (Main titles)
-  - <h2>: 36px to 44px (Subtitles)
-  - <h3>: 28px to 32px (Section headers)
-  - <p>, <li>: 20px to 24px (Body text)
-- Do NOT make text too massive or too tiny. It must fit cleanly inside the 960x540 slide.
+## Layer system — every direct child MUST have id="layer-TYPE-N"
+Types: bg | overlay | deco | image | chart | text
+Render order: bg → overlay → deco → image → chart → text
 
-## Design freedom — make it beautiful
-- Use ANY CSS layout: flexbox, grid, absolute positioning, overlapping layers, full-bleed images
-- Mix bold typography with imagery. Text can sit on top of images with a scrim/blur
-- Try dramatic compositions: giant number + small label, full-screen photo + corner text, diagonal split
-- Decorative elements: gradient blobs, geometric shapes, thin lines, icon grids, glowing orbs
-- Google Fonts via @import or system fonts (Montserrat, Inter, Playfair Display, Space Grotesk, etc.)
-- Font Awesome icons: <i class="fa-solid fa-NAME"></i>
+## Text layer — CRITICAL overflow rules
+EVERY layer-text-* wrapper MUST include overflow:hidden to prevent text bleeding into other elements:
+  style="position:absolute;left:Xpx;top:Ypx;width:Wpx;height:Hpx;overflow:hidden;"
 
-## Layers (render in order)
-1. Background: full-bleed image or gradient (always cover the whole slide)
-2. Overlay / scrim for text readability (rgba or backdrop-filter:blur)
-3. Decorative shapes, accent lines, blobs
-4. Images / illustrations (panels, circles, cards, floating)
-5. Text content — clear, readable, not cramped
+Single-line elements (titles, bullets, labels) MUST also add: white-space:nowrap;text-overflow:ellipsis;
+Multi-line body text: use overflow:hidden only (allow wrapping).
 
-## Image strategy
-- CRITICAL: Do NOT just use one background image for every slide. Mix it up!
-- Use <img> tags for side-by-side layouts, circular profile pics, grid galleries, or floating elements.
-- DDG images provided → use their URLs directly (src="" or background-image).
-- Need a specific image not provided → AI placeholder:
-  <img class="ai-gen-image" src="" data-prompt="detailed description" style="...">
-- AI background: <div style="background-image:url('')" class="ai-gen-image" data-prompt="..." ...>
-- ALWAYS use at least one image per slide, but vary its placement and size.
+NO other styles on wrapper: no bg-*, rounded-*, border-*, shadow-*, backdrop-blur-*, padding.
 
-## Layout & Positioning Rules
-- CRITICAL: Do NOT use `transform` for centering or layout (e.g., no `left:50%; transform:translateX(-50%)`). 
-- Reason: The Animation system uses `transform` and will OVERWRITE your layout transforms, causing elements to shift or disappear.
-- ALWAYS use Flexbox, Grid, or absolute `top/left/right/bottom` values for positioning.
-- To center: use `display:flex; justify-content:center; align-items:center;` on the slide or a full-width container.
-- Everything must fit within 960x540. Do NOT use `vw` or `vh` units.
+Inner tags use Tailwind typography only:
+  text-sm text-base text-lg text-xl text-2xl text-3xl text-4xl text-5xl text-6xl
+  font-bold font-black font-semibold · leading-tight leading-snug · tracking-wide uppercase italic
+  text-white text-[#hex] · text-center text-left text-right
 
-## Animated element pattern
-CRITICAL: You MUST wrap EVERY element inside an animation <div>. Do not drop the wrapper!
-Apply all positioning and layout styles (absolute coords, flex, grid areas, margins) to the WRAPPER <div>, NOT the inner text tag.
-<div class="ppt-element ppt-hidden ppt-ANIMATION" data-click="N" data-duration="Xms" data-ppt-animation="ANIMATION" style="...">
-  <h2 data-ppt-font-size="N" data-ppt-bold="true|false" data-ppt-color="#hex" data-ppt-align="left|center|right" data-ppt-font="Font">content</h2>
+Font size guide: 56px→text-6xl  48px→text-5xl  40px→text-4xl  30px→text-3xl  24px→text-2xl  20px→text-xl  18px→text-lg  14px→text-sm
+
+ALWAYS include data-ppt-* on every inner text tag.
+
+## Text layer pattern
+<div id="layer-text-N" class="ppt-element ppt-hidden ppt-ANIM"
+     data-click="N" data-duration="500ms" data-ppt-animation="ANIM"
+     style="position:absolute;left:Xpx;top:Ypx;width:Wpx;height:Hpx;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">
+  <h2 class="text-4xl font-bold text-white leading-tight"
+      data-ppt-font-size="40" data-ppt-bold="true" data-ppt-color="#fff" data-ppt-align="left" data-ppt-font="Inter">Title text</h2>
 </div>
 
-## Animation names
-ppt-appear | ppt-fade-in | ppt-fly-in-bottom | ppt-fly-in-top | ppt-fly-in-left | ppt-fly-in-right | ppt-zoom-in | ppt-bounce-in | ppt-float-in | ppt-wipe-left | ppt-split | ppt-swivel
+## Icons (Lucide) — available everywhere
+Use Lucide icons freely in any layer: deco, text, or standalone icon blocks.
+Syntax: <i data-lucide="icon-name" style="width:Npx;height:Npx;color:#hex;flex-shrink:0;"></i>
+Size: width/height in px (NOT font-size). Color: set via color:#hex on the element.
 
-## Rules
-- data-click="0" = always visible; data-click="N" = revealed on Nth click
-- data-ppt-* attributes on text tags are required for PPTX export — always include them
-- All text elements must have explicit color in inline style (e.g. color:#fff) — never rely on inherited color
-- Max ~50 words of text per slide — less is more
-- Each slide should feel unique: vary composition, image placement, typography scale"##;
+### Bullet with icon (inside layer-text-*):
+<div style="display:flex;align-items:center;gap:12px;height:100%;">
+  <i data-lucide="rocket" style="width:20px;height:20px;color:#6366f1;flex-shrink:0;"></i>
+  <span class="text-lg text-white leading-tight" data-ppt-font-size="18" data-ppt-bold="false" data-ppt-color="#fff" data-ppt-align="left" data-ppt-font="Inter">Bullet text here</span>
+</div>
+
+### Icon block (inside layer-deco-* or layer-text-*):
+<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;">
+  <i data-lucide="trending-up" style="width:56px;height:56px;color:#f59e0b;"></i>
+  <span class="text-base font-semibold text-white text-center" data-ppt-font-size="16" data-ppt-bold="true" data-ppt-color="#fff" data-ppt-align="center" data-ppt-font="Inter">Growth</span>
+</div>
+
+Useful icons: rocket trending-up shield zap star globe users code lightbulb trophy settings lock cloud smartphone check arrow-right circle-check flame leaf coins search handshake brain cpu database layers target award badge medal gift heart mail bell clock calendar bar-chart pie-chart activity
+
+## Animations
+ppt-appear | ppt-fade-in | ppt-fly-in-bottom | ppt-fly-in-top | ppt-fly-in-left | ppt-fly-in-right | ppt-zoom-in | ppt-bounce-in | ppt-float-in | ppt-wipe-left | ppt-split | ppt-swivel
+data-click="0" = entry · data-click="N" = revealed on Nth click
+
+## Images
+≥1 image OR icon per slide. Pick ONE — never mix src URL + data-prompt:
+- URL available → <img id="layer-image-N" src="URL" data-ppt-animation="ANIM" data-click="N" style="position:absolute;left:Xpx;top:Ypx;width:Wpx;height:Hpx;object-fit:cover;">
+- No URL        → <img id="layer-image-N" class="ai-gen-image" src="" data-prompt="short English description" data-ppt-animation="ANIM" data-click="N" style="position:absolute;...">
+
+## Charts (Chart.js)
+<div id="layer-chart-N" class="ppt-element ppt-hidden ppt-ANIM"
+     data-click="N" data-duration="500ms" data-ppt-animation="ANIM"
+     style="position:absolute;left:Xpx;top:Ypx;width:Wpx;height:Hpx;overflow:hidden;">
+  <canvas style="width:100%;height:100%;display:block;"
+    data-chart='{"type":"bar","data":{"labels":["Q1","Q2","Q3","Q4"],"datasets":[{"label":"Revenue","data":[42,68,55,81],"backgroundColor":["#6366f1","#8b5cf6","#a78bfa","#c4b5fd"],"borderRadius":4}]},"options":{"responsive":false,"animation":false,"plugins":{"legend":{"labels":{"color":"#fff","font":{"size":11}}}},"scales":{"x":{"ticks":{"color":"#ccc"},"grid":{"color":"rgba(255,255,255,.1)"}},"y":{"ticks":{"color":"#ccc"},"grid":{"color":"rgba(255,255,255,.1)"}}}}}'></canvas>
+</div>
+max 7 data points · "animation":false · "responsive":false · types: bar/line/pie/doughnut/radar
+
+## Hard rules
+- NO transform for layout (breaks animations) — use flex/grid/absolute
+- No vw/vh — absolute px only
+- overflow:hidden on ALL text wrappers — NO EXCEPTIONS
+- Stay within safe zone: x ≥ 40, y ≥ 30, x+w ≤ 920, y+h ≤ 510
+- Make each slide visually unique and distinct from others"##;
+
+// ── Theme derivation (no LLM call needed) ─────────────────────────────────────
+
+pub fn derive_theme(style_hint: &str, topic: &str) -> DeckTheme {
+    let h = format!("{} {}", style_hint, topic).to_lowercase();
+
+    let (primary, secondary, bg, text, accent, font, style) =
+        if h.contains("minimal") || h.contains("clean") || h.contains("light") || h.contains("white") {
+            ("#334155", "#475569", "#f8fafc", "#1e293b", "#6366f1", "Inter", "minimal")
+        } else if h.contains("bold") || h.contains("vibrant") || h.contains("colorful") {
+            ("#f59e0b", "#ef4444", "#18181b", "#ffffff", "#f59e0b", "Montserrat", "bold")
+        } else if h.contains("corporate") || h.contains("business") || h.contains("professional") {
+            ("#1d4ed8", "#1e40af", "#0f172a", "#f1f5f9", "#3b82f6", "Inter", "corporate")
+        } else if h.contains("creative") || h.contains("art") || h.contains("design") {
+            ("#a855f7", "#ec4899", "#09090b", "#fafafa", "#a855f7", "Poppins", "creative")
+        } else {
+            // default: modern dark
+            ("#6366f1", "#8b5cf6", "#0f0f1f", "#ffffff", "#f59e0b", "Montserrat", "modern")
+        };
+
+    DeckTheme {
+        primary_color: primary.to_string(),
+        secondary_color: secondary.to_string(),
+        bg_color: bg.to_string(),
+        text_color: text.to_string(),
+        accent_color: accent.to_string(),
+        font_family: font.to_string(),
+        style: style.to_string(),
+    }
+}
+
+// ── Run ───────────────────────────────────────────────────────────────────────
 
 pub async fn run(
     app: &tauri::AppHandle,
@@ -86,52 +212,54 @@ pub async fn run(
     ctx: &AgentContext,
     outline: &[SlideOutline],
     theme: &DeckTheme,
-    animation_plan: &[SlideAnimationPlan],
     images: &[ImageResult],
+    design_specs: &[SlideDesignSpec],
 ) -> Result<GeneratedDeck, String> {
-    let total = animation_plan.len();
+    let total = outline.len();
 
-    // Build unordered futures — each slide runs independently
-    let mut futs: FuturesUnordered<_> = animation_plan.iter().enumerate().map(|(i, slide_plan)| {
-        let settings = settings.clone();
-        let outline_slide = outline.get(slide_plan.index).or_else(|| outline.get(i)).cloned();
-        let slide_plan = slide_plan.clone();
-        let theme = theme.clone();
-        let ctx_language = ctx.language.clone();
-        let images = images.to_vec();
+    // Run up to 3 slide LLM calls concurrently — same token cost, ~3× faster wall-clock.
+    // Each task gets cloned copies so it can be sent across await points.
+    let settings_arc = std::sync::Arc::new(settings.clone());
+    let theme_arc = std::sync::Arc::new(theme.clone());
+    let images_arc = std::sync::Arc::new(images.to_vec());
+    let specs_arc = std::sync::Arc::new(design_specs.to_vec());
 
+    let outline_cloned: Vec<SlideOutline> = outline.to_vec();
+    let language = ctx.language.clone();
+
+    let tasks = outline_cloned.into_iter().enumerate().map(|(i, outline_slide)| {
+        let s    = settings_arc.clone();
+        let t    = theme_arc.clone();
+        let imgs = images_arc.clone();
+        let lang = language.clone();
+        let spec = specs_arc.get(i).cloned();
         async move {
-            generate_single_slide(
-                &settings,
-                i,
-                total,
-                &slide_plan,
-                outline_slide.as_ref(),
-                &theme,
-                &ctx_language,
-                &images,
-            ).await.map(|slide| (i, slide))
+            let slide = generate_single_slide(&s, i, total, &outline_slide, &t, &lang, &imgs, spec.as_ref()).await?;
+            Ok::<(usize, GeneratedSlide), String>((i, slide))
         }
-    }).collect();
+    });
 
-    // Collect results as they complete — emit each slide immediately
-    let mut slides: Vec<Option<GeneratedSlide>> = vec![None; total];
-    while let Some(result) = futs.next().await {
-        match result {
-            Ok((i, slide)) => {
-                let _ = app.emit("slide-ready", SlideReadyPayload {
-                    index: i,
-                    id: slide.id.clone(),
-                    slide_type: slide.slide_type.clone(),
-                    html: slide.html.clone(),
-                });
-                slides[i] = Some(slide);
-            }
-            Err(e) => return Err(e),
-        }
+    let mut results: Vec<(usize, GeneratedSlide)> = futures::stream::iter(tasks)
+        .buffer_unordered(3)
+        .collect::<Vec<Result<(usize, GeneratedSlide), String>>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Sort by index so slides are in the correct order
+    results.sort_by_key(|(i, _)| *i);
+
+    // Emit slide-ready events in order and collect slides
+    let mut slides: Vec<GeneratedSlide> = Vec::with_capacity(total);
+    for (i, slide) in results {
+        let _ = app.emit("slide-ready", SlideReadyPayload {
+            index: i,
+            id: slide.id.clone(),
+            slide_type: slide.slide_type.clone(),
+            html: slide.html.clone(),
+        });
+        slides.push(slide);
     }
-
-    let slides: Vec<GeneratedSlide> = slides.into_iter().flatten().collect();
 
     let title = outline.first()
         .map(|s| s.title.clone())
@@ -161,75 +289,73 @@ async fn generate_single_slide(
     settings: &AppSettings,
     index: usize,
     total: usize,
-    slide_plan: &SlideAnimationPlan,
-    outline_slide: Option<&SlideOutline>,
+    outline_slide: &SlideOutline,
     theme: &DeckTheme,
     language: &str,
     images: &[ImageResult],
+    design: Option<&SlideDesignSpec>,
 ) -> Result<GeneratedSlide, String> {
     let empty_tools = json!([]);
 
-    let elements_desc = slide_plan.elements.iter().map(|el| {
-        format!(
-            "  [{type}] \"{content}\" | animation:ppt-{anim} click={click} dur={dur}ms",
-            type = el.element_type,
-            content = el.content,
-            anim = el.animation,
-            click = el.click_order,
-            dur = el.duration_ms,
-        )
-    }).collect::<Vec<_>>().join("\n");
+    let bullets = if outline_slide.bullets.is_empty() {
+        String::new()
+    } else {
+        format!("\nKey points: {}", outline_slide.bullets.join(" | "))
+    };
 
-    let slide_type = outline_slide.map(|o| o.slide_type.as_str()).unwrap_or("content");
-    let slide_title = outline_slide.map(|o| o.title.as_str()).unwrap_or("");
-    let transition = &slide_plan.transition;
-    let bg = &slide_plan.bg_color;
-
-    // Build image list — rotate starting index per slide for variety
     let image_block = if images.is_empty() {
         String::new()
     } else {
         let len = images.len();
-        // Shift start by index, so each slide gets a different primary set
         let start = (index * 3) % len;
-        let mut lines: Vec<String> = Vec::new();
-        // Give up to 6 images per slide for more choice
-        for i in 0..len.min(6) {
-            let img = &images[(start + i) % len];
-            lines.push(format!(
-                "  - \"{desc}\" {w}×{h} | URL: {url}",
-                desc = img.description.replace('"', "'"),
-                w = img.width, h = img.height,
-                url = img.url,
-            ));
-        }
-        format!("\nAvailable images for this slide:\n{}\n\nCRITICAL: DO NOT use the same image on every slide. Pick different images. DO NOT just use images as backgrounds; place them in <img> tags in columns, grids, or floating elements.", lines.join("\n"))
+        let lines: Vec<String> = (0..len.min(4))
+            .map(|i| {
+                let img = &images[(start + i) % len];
+                format!("  - \"{desc}\" {w}×{h} avg:{avg} text:{txt} | {url}",
+                    desc = img.description.replace('"', "'"),
+                    w = img.width, h = img.height,
+                    avg = img.avg_color, txt = img.text_color,
+                    url = img.url)
+            })
+            .collect();
+        format!("\nAvailable images (pick different ones per slide, place in <img> tags):\n{}", lines.join("\n"))
+    };
+
+    // Design spec block — inject visual direction from design agent
+    let design_block = if let Some(d) = design {
+        format!(
+            "\nDesign spec (FOLLOW THESE EXACTLY):\n  Layout: {layout}\n  Accent: {accent}\n  Background: {bg}\n  Mood: {mood}\n  Decorative elements: {deco}",
+            layout = d.layout_variant,
+            accent = d.accent_hex,
+            bg     = if d.bg_css.is_empty() { theme.bg_color.as_str() } else { d.bg_css.as_str() },
+            mood   = d.mood,
+            deco   = d.deco,
+        )
+    } else {
+        String::new()
     };
 
     let user_msg = format!(
-        r#"Design slide {idx} of {total} — type: {stype}, title: "{title}"
+        r#"Slide {idx}/{total} — type: {stype}, title: "{title}"{bullets}
 Language: {lang}
 
-Theme: {style} | primary:{pri} | accent:{acc} | bg:{bg} | font:{font}
-Transition: {tr}
-{images}
-Content to show (animate each per spec, design layout freely):
-{elements}
-
-Make it visually stunning. Output ONLY raw HTML starting with <div class="ppt-slide""#,
-        idx   = index + 1,
-        total = total,
-        stype = slide_type,
-        title = slide_title,
-        lang  = language,
-        style = theme.style,
-        pri   = theme.primary_color,
-        acc   = theme.accent_color,
-        bg    = bg,
-        font  = theme.font_family,
-        tr    = transition,
-        images = image_block,
-        elements = elements_desc,
+Theme: {style} | bg:{bg} | primary:{pri} | accent:{acc} | font:{font}
+Transition: {tr}{design}{images}
+Output ONLY raw HTML starting with <div class="ppt-slide""#,
+        idx     = index + 1,
+        total   = total,
+        stype   = outline_slide.slide_type,
+        title   = outline_slide.title,
+        bullets = bullets,
+        lang    = language,
+        style   = theme.style,
+        bg      = theme.bg_color,
+        pri     = theme.primary_color,
+        acc     = theme.accent_color,
+        font    = theme.font_family,
+        tr      = outline_slide.transition,
+        design  = design_block,
+        images  = image_block,
     );
 
     let history = vec![AgentMessage { role: "user".to_string(), content: user_msg }];
@@ -239,21 +365,31 @@ Make it visually stunning. Output ONLY raw HTML starting with <div class="ppt-sl
     let raw = resp.text.unwrap_or_default();
     let raw = raw.trim();
 
-    let html = if raw.contains("ppt-slide") {
+    let mut html = if raw.contains("ppt-slide") {
         raw.to_string()
     } else {
         let extracted = extract_html_div(raw);
         if extracted.contains("ppt-slide") {
             extracted
         } else {
-            build_fallback_slide(slide_plan, outline_slide, theme, index)
+            build_fallback_slide(outline_slide, theme, index)
         }
     };
+
+    // Stamp the slide transition so the PPTX exporter can inject <p:transition>
+    let tr = &outline_slide.transition;
+    if !tr.is_empty() && tr != "none" {
+        html = html.replacen(
+            "class=\"ppt-slide\"",
+            &format!("class=\"ppt-slide\" data-transition=\"{}\"", tr),
+            1,
+        );
+    }
 
     let slide_id = format!("s{}", index + 1);
     Ok(GeneratedSlide {
         id: slide_id,
-        slide_type: slide_type.to_string(),
+        slide_type: outline_slide.slide_type.clone(),
         html,
     })
 }
@@ -278,82 +414,53 @@ fn extract_html_div(text: &str) -> String {
     text.to_string()
 }
 
-/// Build a minimal but functional slide when LLM fails to produce proper HTML.
-fn build_fallback_slide(
-    plan: &SlideAnimationPlan,
-    outline: Option<&SlideOutline>,
-    theme: &DeckTheme,
-    index: usize,
-) -> String {
-    let bg = &plan.bg_color;
-    let font = &theme.font_family;
-    let accent = &theme.accent_color;
-
-    let mut elements_html = String::new();
-
-    for el in &plan.elements {
-        let click_attr = if el.click_order == 0 {
-            String::new()
-        } else {
-            format!(
-                r#" class="ppt-element ppt-hidden ppt-{anim}" data-click="{click}" data-duration="{dur}" data-ppt-animation="{anim}""#,
-                anim = el.animation,
-                click = el.click_order,
-                dur = el.duration_ms,
-            )
-        };
-
-        let color = &el.color;
-        let fs = el.font_size;
-        let bold = if el.bold { "font-weight:900;" } else { "font-weight:400;" };
-        let align = &el.align;
-        let content = html_escape(&el.content);
-
-        elements_html.push_str(&format!(
-            r#"<div{click} style="position:absolute;left:{x}px;top:{y}px;width:{w}px;height:{h}px;overflow:hidden;">
-  <p data-ppt-font-size="{fs}" data-ppt-bold="{bold_attr}" data-ppt-color="{color}" data-ppt-align="{align}" data-ppt-font="{font}"
-     style="margin:0;font-size:{fs}px;{bold}color:{color};font-family:'{font}',sans-serif;text-align:{align};line-height:1.3;">{content}</p>
-</div>
-"#,
-            click = click_attr,
-            x = el.x, y = el.y, w = el.width, h = el.height,
-            fs = fs,
-            bold_attr = el.bold,
-            color = color,
-            align = align,
-            font = font,
-            bold = bold,
-            content = content,
-        ));
-    }
-
-    let _ = outline; // available if needed for future enhancements
+fn build_fallback_slide(outline: &SlideOutline, theme: &DeckTheme, index: usize) -> String {
+    let title = html_escape(&outline.title);
+    let bullets_html = outline.bullets.iter().enumerate().map(|(i, b)| {
+        format!(
+            r#"<div id="layer-text-{n}" class="ppt-element ppt-hidden ppt-fly-in-left" data-click="{click}" data-duration="500" data-ppt-animation="fly-in-left"
+     style="position:absolute;left:64px;top:{y}px;width:852px;height:40px;">
+  <p data-ppt-font-size="19" data-ppt-bold="false" data-ppt-color="{color}" data-ppt-align="left" data-ppt-font="{font}"
+     class="text-lg text-white">• {text}</p>
+</div>"#,
+            n = i + 2,
+            click = i + 1,
+            y = 114 + i * 52,
+            color = theme.text_color,
+            font = theme.font_family,
+            text = html_escape(b),
+        )
+    }).collect::<Vec<_>>().join("\n");
 
     format!(
         r#"<div class="ppt-slide" data-slide-index="{idx}" data-bg-color="{bg}" data-transition="{tr}"
      style="position:relative;width:960px;height:540px;overflow:hidden;font-family:'{font}',sans-serif;">
-  <div class="ppt-bg-element" style="position:absolute;inset:0;background:{bg};"></div>
-  <div class="ppt-bg-element" style="position:absolute;bottom:0;left:0;right:0;height:4px;background:{accent};"></div>
-{elements}
+  <div id="layer-bg-1" style="position:absolute;inset:0;background:{bg};"></div>
+  <div id="layer-deco-1" style="position:absolute;bottom:0;left:0;right:0;height:3px;background:{accent};"></div>
+  <div id="layer-text-1" class="ppt-element ppt-hidden ppt-wipe-left" data-click="0" data-duration="500" data-ppt-animation="wipe-left"
+       style="position:absolute;left:40px;top:32px;width:880px;height:62px;">
+    <h2 data-ppt-font-size="40" data-ppt-bold="true" data-ppt-color="{text}" data-ppt-align="left" data-ppt-font="{font}"
+        class="text-4xl font-bold leading-tight" style="color:{text};">{title}</h2>
+  </div>
+{bullets}
 </div>"#,
         idx = index,
-        bg = bg,
-        tr = plan.transition,
-        font = font,
-        accent = accent,
-        elements = elements_html,
+        bg = theme.bg_color,
+        tr = outline.transition,
+        font = theme.font_family,
+        accent = theme.accent_color,
+        text = theme.text_color,
+        title = title,
+        bullets = bullets_html,
     )
 }
 
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-     .replace('<', "&lt;")
-     .replace('>', "&gt;")
-     .replace('"', "&quot;")
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// Assemble all slide HTML fragments into a single self-contained presentation HTML file.
-/// Uses Web Animations API (no CSS keyframes) for element entrance animations.
+// ── Master HTML ────────────────────────────────────────────────────────────────
+
 pub fn build_master_html(title: &str, slides: &[GeneratedSlide]) -> String {
     let slides_html: String = slides.iter().enumerate().map(|(i, s)| {
         let html = if s.html.contains("data-slide-index") {
@@ -370,7 +477,9 @@ pub fn build_master_html(title: &str, slides: &[GeneratedSlide]) -> String {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.400.0/dist/umd/lucide.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
 <style>
 *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
 html,body{{width:100%;height:100%;overflow:hidden;background:#111;color:#fff;display:flex;align-items:center;justify-content:center}}
@@ -417,27 +526,36 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#111;color:#fff;dis
 (function(){{
   /* ── Web Animations API — entrance animations ─────────────────────────── */
   var ANIMS = {{
-    'appear':        function(e,d){{e.animate([{{opacity:0}},{{opacity:1}}],{{duration:Math.min(d,100),fill:'forwards'}});}},
-    'fade-in':       function(e,d){{e.animate([{{opacity:0}},{{opacity:1}}],{{duration:d,easing:'ease',fill:'forwards'}});}},
-    'fly-in-bottom': function(e,d){{e.animate([{{opacity:0,transform:'translateY(110%)'}},{{opacity:1,transform:'translateY(0)'}}],{{duration:d,easing:'cubic-bezier(.25,.46,.45,.94)',fill:'forwards'}});}},
-    'fly-in-top':    function(e,d){{e.animate([{{opacity:0,transform:'translateY(-110%)'}},{{opacity:1,transform:'translateY(0)'}}],{{duration:d,easing:'cubic-bezier(.25,.46,.45,.94)',fill:'forwards'}});}},
-    'fly-in-left':   function(e,d){{e.animate([{{opacity:0,transform:'translateX(-110%)'}},{{opacity:1,transform:'translateX(0)'}}],{{duration:d,easing:'cubic-bezier(.25,.46,.45,.94)',fill:'forwards'}});}},
-    'fly-in-right':  function(e,d){{e.animate([{{opacity:0,transform:'translateX(110%)'}},{{opacity:1,transform:'translateX(0)'}}],{{duration:d,easing:'cubic-bezier(.25,.46,.45,.94)',fill:'forwards'}});}},
-    'zoom-in':       function(e,d){{e.animate([{{opacity:0,transform:'scale(0.3)'}},{{opacity:1,transform:'scale(1)'}}],{{duration:d,easing:'cubic-bezier(.175,.885,.32,1.275)',fill:'forwards'}});}},
-    'bounce-in':     function(e,d){{e.animate([{{opacity:0,transform:'scale(0.3)'}},{{opacity:1,transform:'scale(1.08)'}},{{opacity:1,transform:'scale(0.94)'}},{{opacity:1,transform:'scale(1)'}}],{{duration:d,fill:'forwards'}});}},
-    'float-in':      function(e,d){{e.animate([{{opacity:0,transform:'translateY(36px)'}},{{opacity:1,transform:'translateY(0)'}}],{{duration:d,easing:'cubic-bezier(.22,1,.36,1)',fill:'forwards'}});}},
-    'wipe-left':     function(e,d){{e.style.opacity='1';e.animate([{{clipPath:'inset(0 100% 0 0)'}},{{clipPath:'inset(0 0% 0 0)'}}],{{duration:d,easing:'ease-out',fill:'forwards'}});}},
-    'split':         function(e,d){{e.style.opacity='1';e.animate([{{clipPath:'inset(50% 0)'}},{{clipPath:'inset(0% 0)'}}],{{duration:d,easing:'ease-out',fill:'forwards'}});}},
-    'swivel':        function(e,d){{e.animate([{{opacity:0,transform:'perspective(800px) rotateY(-90deg)'}},{{opacity:1,transform:'perspective(800px) rotateY(0)'}}],{{duration:d,easing:'cubic-bezier(.4,0,.2,1)',fill:'forwards'}});}}
+    'appear':        function(e,d){{return e.animate([{{opacity:0}},{{opacity:1}}],{{duration:Math.min(d,100),fill:'forwards'}});}},
+    'fade-in':       function(e,d){{return e.animate([{{opacity:0}},{{opacity:1}}],{{duration:d,easing:'ease',fill:'forwards'}});}},
+    'fly-in-bottom': function(e,d){{return e.animate([{{opacity:0,transform:'translateY(110%)'}},{{opacity:1,transform:'translateY(0)'}}],{{duration:d,easing:'cubic-bezier(.25,.46,.45,.94)',fill:'forwards'}});}},
+    'fly-in-top':    function(e,d){{return e.animate([{{opacity:0,transform:'translateY(-110%)'}},{{opacity:1,transform:'translateY(0)'}}],{{duration:d,easing:'cubic-bezier(.25,.46,.45,.94)',fill:'forwards'}});}},
+    'fly-in-left':   function(e,d){{return e.animate([{{opacity:0,transform:'translateX(-110%)'}},{{opacity:1,transform:'translateX(0)'}}],{{duration:d,easing:'cubic-bezier(.25,.46,.45,.94)',fill:'forwards'}});}},
+    'fly-in-right':  function(e,d){{return e.animate([{{opacity:0,transform:'translateX(110%)'}},{{opacity:1,transform:'translateX(0)'}}],{{duration:d,easing:'cubic-bezier(.25,.46,.45,.94)',fill:'forwards'}});}},
+    'zoom-in':       function(e,d){{return e.animate([{{opacity:0,transform:'scale(0.3)'}},{{opacity:1,transform:'scale(1)'}}],{{duration:d,easing:'cubic-bezier(.175,.885,.32,1.275)',fill:'forwards'}});}},
+    'bounce-in':     function(e,d){{return e.animate([{{opacity:0,transform:'scale(0.3)'}},{{opacity:1,transform:'scale(1.08)'}},{{opacity:1,transform:'scale(0.94)'}},{{opacity:1,transform:'scale(1)'}}],{{duration:d,fill:'forwards'}});}},
+    'float-in':      function(e,d){{return e.animate([{{opacity:0,transform:'translateY(36px)'}},{{opacity:1,transform:'translateY(0)'}}],{{duration:d,easing:'cubic-bezier(.22,1,.36,1)',fill:'forwards'}});}},
+    'wipe-left':     function(e,d){{e.style.opacity='1';return e.animate([{{clipPath:'inset(0 100% 0 0)'}},{{clipPath:'inset(0 0% 0 0)'}}],{{duration:d,easing:'ease-out',fill:'forwards'}});}},
+    'split':         function(e,d){{e.style.opacity='1';return e.animate([{{clipPath:'inset(50% 0)'}},{{clipPath:'inset(0% 0)'}}],{{duration:d,easing:'ease-out',fill:'forwards'}});}},
+    'swivel':        function(e,d){{return e.animate([{{opacity:0,transform:'perspective(800px) rotateY(-90deg)'}},{{opacity:1,transform:'perspective(800px) rotateY(0)'}}],{{duration:d,easing:'cubic-bezier(.4,0,.2,1)',fill:'forwards'}});}}
   }};
 
   function revealEl(el){{
     var anim = el.getAttribute('data-ppt-animation') || 'fade-in';
     var dur  = parseInt(el.getAttribute('data-duration') || '500', 10);
     el.getAnimations().forEach(function(a){{a.cancel();}});
+    el.style.opacity = '';
+    el.style.transform = '';
+    el.style.clipPath = '';
     el.classList.remove('ppt-hidden');
     el.style.visibility = 'visible';
-    (ANIMS[anim] || ANIMS['fade-in'])(el, dur);
+    var a = (ANIMS[anim] || ANIMS['fade-in'])(el, dur);
+    if (a && a.finished) {{
+      a.finished.then(function(){{
+        try {{ a.commitStyles(); }} catch(e) {{}}
+        a.cancel();
+      }}).catch(function(){{}});
+    }}
   }}
 
   function hideEl(el){{
@@ -512,6 +630,7 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#111;color:#fff;dis
     clickSequence = getSequence(next);
     clickStep = 0;
     updateProgress(); notifyParent();
+    setTimeout(function(){{ initChartsInSlide(next); }}, 50);
   }}
 
   function revealNext(){{
@@ -563,6 +682,23 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#111;color:#fff;dis
     if(e.key==='End')  showSlide(total-1,1);
   }});
 
+  /* ── Chart.js ─────────────────────────────────────────────────────────── */
+  var chartInstances = new Map();
+  function initChartsInSlide(slide){{
+    if(typeof Chart === 'undefined') return;
+    slide.querySelectorAll('canvas[data-chart]').forEach(function(canvas){{
+      var existing = chartInstances.get(canvas);
+      if(existing){{ try{{existing.destroy();}}catch(e){{}} }}
+      try{{
+        var cfg = JSON.parse(canvas.getAttribute('data-chart'));
+        var parent = canvas.parentElement;
+        canvas.width  = parent ? parent.offsetWidth  : (parseInt(canvas.style.width)  || 400);
+        canvas.height = parent ? parent.offsetHeight : (parseInt(canvas.style.height) || 300);
+        chartInstances.set(canvas, new Chart(canvas, cfg));
+      }}catch(e){{ console.warn('[Deckr] Chart error:', e); }}
+    }});
+  }}
+
   function scaleToFit(){{
     var s = Math.min(window.innerWidth/960, window.innerHeight/540);
     deck.style.transform = 'scale('+s+')';
@@ -581,7 +717,9 @@ html,body{{width:100%;height:100%;overflow:hidden;background:#111;color:#fff;dis
      slides[0].classList.add('active');
      clickSequence = getSequence(slides[0]);
      slides[0].querySelectorAll('[data-click="0"]').forEach(function(el) {{ revealEl(el); }});
+     initChartsInSlide(slides[0]);
   }}
+  if(typeof lucide !== 'undefined') lucide.createIcons();
   updateProgress(); notifyParent();
 }})();
 </script>

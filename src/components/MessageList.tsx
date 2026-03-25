@@ -1,4 +1,4 @@
-import { Bot, Check, Copy, Loader2 } from 'lucide-react';
+import { Bot, Check, Copy, ExternalLink, Loader2 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { AgentLogEntry } from '../services/llm';
@@ -6,9 +6,11 @@ import type { AgentStatus, Message } from '../types';
 
 const AGENT_LABELS: Record<string, string> = {
   orchestrator: 'Orchestrator',
+  search: 'Search',
   content: 'Content',
-  image: 'Image Search',
-  animation: 'Animation',
+  design: 'Design',
+  slides: 'Renderer',
+  edit: 'Editor',
   html: 'Renderer',
 };
 
@@ -35,21 +37,55 @@ function AgentPipeline({ log, currentMessage }: { log: AgentLogEntry[]; currentM
       </div>
       <div className="flex-1 min-w-0 space-y-2 pt-0.5">
         {entries.length > 0 ? (
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {entries.map((entry) => (
-              <div key={entry.agent} className="flex items-center gap-2.5">
-                {entry.status === 'done' ? (
-                  <div className="w-4 h-4 rounded-full bg-cta/15 flex items-center justify-center shrink-0">
-                    <Check size={9} className="text-cta" strokeWidth={3} />
+              <div key={entry.agent} className="space-y-1.5">
+                <div className="flex items-center gap-2.5">
+                  {entry.status === 'done' ? (
+                    <div className="w-4 h-4 rounded-full bg-cta/15 flex items-center justify-center shrink-0">
+                      <Check size={9} className="text-cta" strokeWidth={3} />
+                    </div>
+                  ) : (
+                    <Loader2 size={14} className="text-fg-4 animate-spin shrink-0" />
+                  )}
+                  <span className={`text-[13px] leading-none ${entry.status === 'done' ? 'text-fg-4' : 'text-fg-3'}`}>
+                    <span className="font-medium">{AGENT_LABELS[entry.agent] ?? entry.agent}</span>
+                    {' — '}
+                    {entry.message}
+                  </span>
+                </div>
+
+                {entry.agent === 'search' && entry.status === 'done' && entry.images && entry.images.length > 0 && (
+                  <div className="ml-6 flex gap-1.5 overflow-x-auto pb-0.5">
+                    {entry.images.map((url, i) => (
+                      <img
+                        key={i}
+                        src={url}
+                        alt=""
+                        className="h-12 w-20 object-cover rounded shrink-0 opacity-75 hover:opacity-100 transition-opacity"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    ))}
                   </div>
-                ) : (
-                  <Loader2 size={14} className="text-fg-4 animate-spin shrink-0" />
                 )}
-                <span className={`text-[13px] leading-none ${entry.status === 'done' ? 'text-fg-4' : 'text-fg-3'}`}>
-                  <span className="font-medium">{AGENT_LABELS[entry.agent] ?? entry.agent}</span>
-                  {' — '}
-                  {entry.message}
-                </span>
+
+                {entry.agent === 'search' && entry.status === 'done' && entry.links && entry.links.length > 0 && (
+                  <div className="ml-6 flex flex-wrap gap-1.5">
+                    {entry.links.map((link, i) => (
+                      <a
+                        key={i}
+                        href={link.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-input border border-line text-[11px] text-fg-4 hover:text-fg-2 hover:border-fg-4 transition-colors max-w-[180px]"
+                        title={link.title}
+                      >
+                        <ExternalLink size={9} className="shrink-0" />
+                        <span className="truncate">{link.title}</span>
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -67,9 +103,12 @@ function AgentPipeline({ log, currentMessage }: { log: AgentLogEntry[]; currentM
 export function MessageList({ messages, isLoading, agentStatus, agentLog, onCopy }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Scroll only when a new message is ADDED or loading/agent state changes —
+  // NOT when an existing message's content updates (typing animation every 18ms).
+  const messageCount = messages.length;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading, agentLog.length]);
+  }, [messageCount, isLoading, agentLog.length]);
 
   return (
     <div className="flex-1 overflow-y-auto">

@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::{AgentMessage, call_llm, html_agent::build_master_html, GeneratedSlide};
+use super::{AgentMessage, call_llm, html_agent::build_master_html, GeneratedSlide, safe_trunc};
 use crate::settings::AppSettings;
 
 // ─── Base64 stripping ─────────────────────────────────────────────────────────
@@ -65,9 +65,10 @@ Rules for HTML Structure:
 2. Animation: Elements revealed on click MUST be wrapped in a div with class "ppt-element ppt-hidden ppt-ANIMATION" AND "data-click" attribute (1, 2, 3...). Do NOT strip this wrapper when editing text inside it!
 3. Animation: Elements with "data-click" > 0 MUST have "data-ppt-animation" attribute (e.g., "fade-in", "fly-in-bottom").
 4. Layout: STRICTLY FORBIDDEN to use `transform` for centering (e.g. no `translateX(-50%)`). Use Flexbox, Grid, or absolute `left/top` only. Animations will overwrite any layout `transform`. Everything must fit 960x540.
-5. Typography: STRICT Font Sizes for 960x540 canvas: <h1> (48px-60px), <h2> (36px-44px), <h3> (28px-32px), <p> and <li> (20px-24px).
+5. Typography — canvas is 960×540px, fixed sizes (DO NOT deviate):
+   <h1>=60px(text-6xl, ~20 chars/line) · <h2>=36px(text-4xl, ~32 chars) · <h3>=30px(text-3xl) · <p>=20px(text-xl, ~72 chars) · <li>=18px(text-lg) · small label=14px(text-sm)
 6. Export: All text tags (<p>, <span>, <h1>, etc.) MUST have data-ppt-* attributes (data-ppt-font-size, data-ppt-bold, data-ppt-color, data-ppt-align, data-ppt-font).
-7. Colors: All text tags MUST have explicit color in inline style (e.g., style="...;color:#ffffff"). Never rely on inherited color.
+7. Colors: All text tags MUST have explicit color in inline style. Keep text readable against its background.
 8. Images: Standard <img> tags must have a valid src. For AI-generated images, use class="ai-gen-image" and data-prompt.
 9. Placeholders: Keep [b64-N] placeholders exactly as they are if you are not replacing the image.
 
@@ -111,7 +112,7 @@ pub async fn run(
 
     // Build prompt
     let slides_text: String = stripped_map.iter()
-        .map(|(id, html, _)| format!("=== Slide {} ===\n{}\n", id, &html[..html.len().min(4000)]))
+        .map(|(id, html, _)| format!("=== Slide {} ===\n{}\n", id, safe_trunc(html, 4000)))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -139,7 +140,7 @@ pub async fn run(
     let raw = resp.text.unwrap_or_default();
     let json_str = extract_json_array(&raw);
     let updates: Value = serde_json::from_str(&json_str)
-        .map_err(|e| format!("Edit agent parse error: {}. Raw: {}", e, &raw[..raw.len().min(300)]))?;
+        .map_err(|e| format!("Edit agent parse error: {}. Raw: {}", e, safe_trunc(&raw, 300)))?;
 
     let arr = updates.as_array()
         .ok_or("Edit agent did not return an array")?;

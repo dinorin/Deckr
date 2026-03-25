@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
 use std::time::Duration;
+
+fn safe_trunc(s: &str, max_bytes: usize) -> &str {
+    let mut end = s.len().min(max_bytes);
+    while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+    &s[..end]
+}
 
 // ─── Image Result ─────────────────────────────────────────────────────────────
 
@@ -76,9 +81,10 @@ async fn fetch_avg_color(client: &reqwest::Client, url: &str) -> Option<(u8, u8,
 
 // ─── Tavily Search ────────────────────────────────────────────────────────────
 
-pub async fn tavily_search(query: &str, api_key: &str) -> Result<(String, Vec<String>), String> {
+/// (text_summary, image_urls, web_links as (title, url))
+pub async fn tavily_search(query: &str, api_key: &str) -> Result<(String, Vec<String>, Vec<(String, String)>), String> {
     if api_key.is_empty() {
-        return Ok((format!("(No API key for research on: {})", query), vec![]));
+        return Ok((format!("(No API key for research on: {})", query), vec![], vec![]));
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -89,7 +95,7 @@ pub async fn tavily_search(query: &str, api_key: &str) -> Result<(String, Vec<St
         "api_key": api_key,
         "query": query,
         "search_depth": "basic",
-        "max_results": 5,
+        "max_results": 3,
         "include_answer": true,
         "include_images": true
     });
@@ -100,13 +106,14 @@ pub async fn tavily_search(query: &str, api_key: &str) -> Result<(String, Vec<St
         .body(serde_json::to_string(&body).unwrap())
         .send().await {
             Ok(r) => r,
-            Err(e) => return Ok((format!("(Search timeout/error for: {}. Error: {})", query, e), vec![])),
+            Err(e) => return Ok((format!("(Search timeout/error for: {}. Error: {})", query, e), vec![], vec![])),
         };
 
     let text = resp.text().await.unwrap_or_default();
     let json: Value = serde_json::from_str(&text).unwrap_or(json!({}));
 
     let mut result = String::new();
+    let mut links: Vec<(String, String)> = Vec::new();
 
     if let Some(answer) = json["answer"].as_str() {
         if !answer.is_empty() {
@@ -115,45 +122,48 @@ pub async fn tavily_search(query: &str, api_key: &str) -> Result<(String, Vec<St
     }
 
     if let Some(results) = json["results"].as_array() {
-        for (i, r) in results.iter().take(4).enumerate() {
+        for (i, r) in results.iter().take(2).enumerate() {
             let title = r["title"].as_str().unwrap_or("");
+            let url   = r["url"].as_str().unwrap_or("");
             let content = r["content"].as_str().unwrap_or("");
             if !content.is_empty() {
-                result.push_str(&format!("{}. {}\n{}\n\n", i + 1, title, &content[..content.len().min(300)]));
+                result.push_str(&format!("{}. {}\n{}\n\n", i + 1, title, safe_trunc(content, 150)));
+            }
+            if !url.is_empty() && !title.is_empty() {
+                links.push((title.to_string(), url.to_string()));
             }
         }
     }
-    
+
     let mut image_urls = Vec::new();
     if let Some(images) = json["images"].as_array() {
         for img_val in images {
             if let Some(url) = img_val.as_str() {
                  image_urls.push(url.to_string());
             } else if let Some(url) = img_val["url"].as_str() {
-                 // Sometime Tavily returns objects for images
                  image_urls.push(url.to_string());
             }
         }
     }
 
     if result.is_empty() {
-        return Ok((format!("(No results found for: {})", query), image_urls));
+        return Ok((format!("(No results found for: {})", query), image_urls, links));
     }
-    Ok((result, image_urls))
+    Ok((result, image_urls, links))
 }
 
-/// Run multiple Tavily searches in parallel, return aggregated text and combined images.
-pub async fn parallel_tavily_search(queries: Vec<String>, api_key: &str) -> (String, Vec<String>) {
+/// Run multiple Tavily searches in parallel, return aggregated (text, images, links).
+pub async fn parallel_tavily_search(queries: Vec<String>, api_key: &str) -> (String, Vec<String>, Vec<(String, String)>) {
     if api_key.is_empty() || queries.is_empty() {
-        return (String::new(), vec![]);
+        return (String::new(), vec![], vec![]);
     }
-    let futs: Vec<_> = queries.iter().map(|q| {
+    let futs: Vec<_> = queries.iter().take(2).map(|q| {
         let q = q.clone();
         let key = api_key.to_string();
         async move {
             match tavily_search(&q, &key).await {
-                Ok((r, imgs)) => (format!("### {}\n{}", q, r), imgs),
-                Err(_) => (String::new(), vec![]),
+                Ok((r, imgs, lnks)) => (format!("### {}\n{}", q, r), imgs, lnks),
+                Err(_) => (String::new(), vec![], vec![]),
             }
         }
     }).collect();
@@ -161,19 +171,20 @@ pub async fn parallel_tavily_search(queries: Vec<String>, api_key: &str) -> (Str
     let results = futures::future::join_all(futs).await;
     let mut combined_text = String::new();
     let mut combined_images = Vec::new();
-    
-    for (txt, mut imgs) in results {
+    let mut combined_links: Vec<(String, String)> = Vec::new();
+
+    for (txt, mut imgs, mut lnks) in results {
         if !txt.is_empty() {
             if !combined_text.is_empty() { combined_text.push('\n'); }
             combined_text.push_str(&txt);
         }
         combined_images.append(&mut imgs);
+        combined_links.append(&mut lnks);
     }
-    // Deduplicate images
     combined_images.sort();
     combined_images.dedup();
-    
-    (combined_text, combined_images)
+
+    (combined_text, combined_images, combined_links)
 }
 
 // ─── Web Search ───────────────────────────────────────────────────────────────

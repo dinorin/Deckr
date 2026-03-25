@@ -9,12 +9,15 @@ interface SlidePreviewProps {
   isOpen: boolean;
   onClose: () => void;
   onExport: () => void;
+  isExporting?: boolean;
+  exportProgress?: number;
+  imageStatus?: string | null;
 }
 
 const THUMB_W = 84;
 const THUMB_H = 47;
 
-export function SlidePreview({ deckData, isOpen, onClose, onExport }: SlidePreviewProps) {
+export function SlidePreview({ deckData, isOpen, onClose, onExport, isExporting = false, exportProgress = 0, imageStatus }: SlidePreviewProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const slides = deckData?.slides || [];
@@ -102,10 +105,38 @@ export function SlidePreview({ deckData, isOpen, onClose, onExport }: SlidePrevi
           {slides.length > 0 && (
             <button
               onClick={onExport}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-cta hover:bg-cta-hv text-cta-fg text-[14px] font-medium rounded-lg transition-colors"
+              disabled={isExporting}
+              className="relative flex items-center gap-1.5 px-3 py-1.5 bg-cta hover:bg-cta-hv text-cta-fg text-[14px] font-medium rounded-lg transition-colors disabled:cursor-not-allowed overflow-hidden"
+              style={{ minWidth: isExporting ? 120 : undefined }}
             >
-              <Download size={11} />
-              Export PPTX
+              {/* Progress fill */}
+              {isExporting && (
+                <span
+                  className="absolute inset-0 bg-white/15 origin-left transition-all duration-300 ease-out"
+                  style={{ transform: `scaleX(${exportProgress / 100})` }}
+                />
+              )}
+              {/* Shimmer sweep */}
+              {isExporting && (
+                <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-[shimmer_1.2s_ease-in-out_infinite]" />
+              )}
+              <span className="relative flex items-center gap-1.5">
+                {isExporting ? (
+                  <>
+                    <svg className="animate-spin shrink-0" width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                    </svg>
+                    <span className="tabular-nums">
+                      {Math.round(exportProgress / 100 * slides.length)}/{slides.length}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Download size={11} />
+                    Export PPTX
+                  </>
+                )}
+              </span>
             </button>
           )}
           <button onClick={onClose} className="p-2.5 rounded-md text-fg-5 hover:text-fg-3 transition-colors">
@@ -175,7 +206,10 @@ export function SlidePreview({ deckData, isOpen, onClose, onExport }: SlidePrevi
       {/* Status bar */}
       <div className="px-3 h-7 border-t border-line shrink-0 flex items-center justify-between">
         <span className="text-[12px] text-fg-3">
-          {slides[currentSlide] ? slides[currentSlide].type : '—'}
+          {imageStatus
+            ? <span className={imageStatus.startsWith('Image failed') || imageStatus.startsWith('No image') ? 'text-red-400' : 'text-yellow-400'}>{imageStatus}</span>
+            : (slides[currentSlide] ? slides[currentSlide].type : '—')
+          }
         </span>
         {deckData?.theme && (
           <span className="text-[12px] text-fg-3">{deckData.theme.style}</span>
